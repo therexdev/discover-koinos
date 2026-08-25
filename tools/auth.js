@@ -1,16 +1,22 @@
 /* ============================================================
-   Social / hosted login — custodial AT REST, non-custodial IN USE.
+   Social / hosted login — non-custodial IN USE, two custody homes.
 
    Local Wallet and Import stay fully non-custodial (the key is made and
-   kept in the browser). Google and X are a convenience path: the server
-   generates a Koinos keypair, custodies it ENCRYPTED (AES-256-GCM under a
-   key derived from LOGIN_SECRET), and RELEASES the plaintext WIF to the
-   browser only on a verified login. From that moment the browser holds the
-   key and signs locally, exactly like a Local Wallet — the server's copy is
-   an encrypted backup, and the on-chain account never depends on us.
+   kept in the browser).
 
-   Honest trade-off, stated in the UI: convenience accounts trust the
-   gateway with an encrypted key; the Wallet page can export it any time.
+   GOOGLE is BRIDGED to Aurvania (the Koinos game / OURO account system):
+   we forward the Google ID token to aurvania.quest/api/account, and it
+   answers with the SAME wallet that Google login owns in Aurvania and on
+   OURO — one identity, one address, every site. We custody nothing for
+   Google; Aurvania holds the encrypted key and releases the WIF to this
+   browser on a verified login. (The ID token must be minted for AURVANIA's
+   Google client id, so the button uses that id — set GOOGLE_CLIENT_ID to
+   it, or leave it unset and we inherit it from Aurvania at boot.)
+
+   X (Twitter) is the one convenience path we custody ourselves: the server
+   generates a keypair, stores it ENCRYPTED (AES-256-GCM under a key derived
+   from LOGIN_SECRET), and releases the WIF only on a verified login. From
+   that moment the browser signs locally, exactly like a Local Wallet.
    ============================================================ */
 'use strict';
 const fs = require('fs');
@@ -30,7 +36,49 @@ function createAuth(cfg) {
     xClientId = '',
     xClientSecret = '',
     xRedirectUri = '',
+    // Google bridge → Aurvania / OURO shared account system.
+    aurvaniaApi = 'https://aurvania.quest',
+    bridgeUa = 'curl/8.5.0 (Discover-Koinos gateway)',
   } = cfg;
+
+  /* The Google client id we actually use. If the operator set one we keep
+     it; otherwise warmup() inherits Aurvania's, so the browser mints an ID
+     token Aurvania will accept (it checks `aud` against its own id). */
+  let resolvedGoogleCid = String(googleClientId || '').trim();
+
+  /* aurvania.quest's host 403s unfamiliar User-Agents, so the bridge speaks
+     with a curl-like identity (the pattern OURO already ships). */
+  async function bridgeFetch(url, opts = {}) {
+    const { timeoutMs = 12000, headers = {}, ...rest } = opts;
+    const r = await fetch(url, {
+      ...rest,
+      headers: { 'User-Agent': bridgeUa, Accept: 'application/json', ...headers },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    let body = null;
+    try { body = await r.json(); } catch (_) {}
+    return { ok: r.ok, status: r.status, body };
+  }
+
+  /* Best-effort at boot: if we have no Google client id of our own, inherit
+     Aurvania's so Google sign-in still yields the shared wallet. */
+  async function warmup() {
+    if (resolvedGoogleCid) return;
+    try {
+      const r = await bridgeFetch(aurvaniaApi + '/api/chain-info', { timeoutMs: 12000 });
+      if (r.ok && r.body && r.body.googleClientId) resolvedGoogleCid = String(r.body.googleClientId);
+    } catch (_) { /* Aurvania unreachable at boot — Google stays off until set */ }
+  }
+
+  // The email is only for the account-menu label; the security is Aurvania's
+  // verification, so decoding the (unverified) token payload here is fine.
+  function jwtEmail(idToken) {
+    try {
+      const seg = String(idToken).split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+      const p = JSON.parse(Buffer.from(seg, 'base64').toString('utf8'));
+      return p && p.email ? String(p.email) : '';
+    } catch (_) { return ''; }
+  }
 
   const FILE = path.join(dataDir, 'logins.json');
   let store;
@@ -80,29 +128,34 @@ function createAuth(cfg) {
     }
   }
 
-  const googleEnabled = () => !!googleClientId;
+  const googleEnabled = () => !!resolvedGoogleCid;
   const xEnabled = () => !!(xClientId && xClientSecret && xRedirectUri);
 
-  /* ---- Google (GSI ID token) ---- */
+  /* ---- Google → the Aurvania bridge ----
+     We do NOT verify or custody here. Aurvania verifies the ID token (Google
+     tokeninfo + aud + email_verified) and returns the SAME wallet the same
+     Google account has in Aurvania and on OURO. That shared custody store —
+     not any derivation — is what makes the address identical across sites. */
   async function google(idToken) {
     if (!googleEnabled()) { const e = new Error('Google sign-in is not configured on this server'); e.status = 503; throw e; }
     if (!idToken) { const e = new Error('idToken required'); e.status = 400; throw e; }
-    let info;
+    let r;
     try {
-      const r = await fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken), { signal: AbortSignal.timeout(10000) });
-      if (!r.ok) { const e = new Error('Google rejected that sign-in — try again'); e.status = 401; throw e; }
-      info = await r.json();
-    } catch (e) { if (e.status) throw e; const x = new Error('Could not reach Google — try again shortly'); x.status = 502; throw x; }
-    if (info.aud !== googleClientId) { const e = new Error('That sign-in belongs to a different app'); e.status = 401; throw e; }
-    if (String(info.email_verified) !== 'true' || !info.sub) { const e = new Error('Google did not verify that account'); e.status = 401; throw e; }
-    let rec = store.byGoogle[info.sub];
-    const created = !rec;
-    if (!rec) {
-      const acct = newHosted();
-      rec = store.byGoogle[info.sub] = { email: String(info.email || '').toLowerCase(), wifEnc: encryptWif(acct.wif), addr: acct.address, createdAt: Date.now() };
-      save();
+      r = await bridgeFetch(aurvaniaApi + '/api/account', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'google', idToken }),
+        timeoutMs: 15000,
+      });
+    } catch (_) {
+      const e = new Error('Could not reach the Koinos account service — try again shortly'); e.status = 502; throw e;
     }
-    return { wif: release(rec, 'google'), address: rec.addr, created, label: rec.email || 'Google account' };
+    if (!r.ok || !r.body || !r.body.wif) {
+      // Pass Aurvania's own reason through — a mismatched client id shows up
+      // here as "belongs to a different app", which points at the real fix.
+      const e = new Error((r.body && r.body.error) || 'Google sign-in failed'); e.status = r.status || 502; throw e;
+    }
+    return { wif: r.body.wif, address: r.body.address, created: !!r.body.created, label: jwtEmail(idToken) || 'Google account' };
   }
 
   /* ---- X (Twitter) OAuth 2.0 with PKCE ----
@@ -188,7 +241,11 @@ function createAuth(cfg) {
     return { wif: c.wif, address: c.address, label: c.label };
   }
 
-  return { googleEnabled, xEnabled, google, xLoginUrl, xCallback, xClaimWif };
+  return {
+    warmup, googleEnabled, xEnabled, google, xLoginUrl, xCallback, xClaimWif,
+    googleClientId: () => resolvedGoogleCid,
+    aurvania: () => aurvaniaApi,
+  };
 }
 
 module.exports = { createAuth };

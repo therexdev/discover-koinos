@@ -113,7 +113,7 @@ const UI = (() => {
         if (cfg.demo) { badge.textContent = 'demo mode'; badge.classList.add('demo'); }
         else badge.textContent = cfg.testnet ? cfg.networkLabel.replace('Koinos ', '') : 'mainnet';
       }
-      if (cfg.auth && cfg.auth.google) loadGoogle(cfg.auth.googleClientId);
+      if (cfg.auth && cfg.auth.google) { _googleConfigured = true; loadGoogle(cfg.auth.googleClientId); }
       return cfg;
     } catch (e) {
       const badge = $('#net-badge');
@@ -124,7 +124,7 @@ const UI = (() => {
 
   /* ---------------- sign-in modal ---------------- */
 
-  let _modal = null, _googleReady = false;
+  let _modal = null, _googleReady = false, _googleConfigured = false;
   function buildLoginModal() {
     if (_modal) return _modal;
     const d = document.createElement('dialog');
@@ -133,7 +133,16 @@ const UI = (() => {
       <h3>Get your Koinos account</h3>
       <p class="sub">One account, four ways in. Everything on this site is free either way.</p>
       <div class="auth-opts">
-        <div id="auth-google" class="auth-opt g-slot" hidden></div>
+        <div id="auth-google" class="auth-opt g-wrap" hidden>
+          <span class="ic" aria-hidden="true"><svg class="g-mark" viewBox="0 0 48 48">
+            <path fill="#4285F4" d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z"/>
+            <path fill="#34A853" d="M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z"/>
+            <path fill="#FBBC05" d="M11.69 28.18C11.25 26.86 11 25.45 11 24s.25-2.86.69-4.18v-5.7H4.34C2.85 17.09 2 20.45 2 24s.85 6.91 2.34 9.88l7.35-5.7z"/>
+            <path fill="#EA4335" d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z"/>
+          </svg></span>
+          <span>Continue with Google</span>
+          <div class="g-overlay" id="auth-google-slot" aria-label="Continue with Google"></div>
+        </div>
         <button class="auth-opt" id="auth-x" hidden><span class="ic">𝕏</span> Continue with X</button>
         <button class="auth-opt primary" id="auth-local"><span class="ic">🔑</span> Create a Local Wallet <em>recommended</em></button>
         <button class="auth-opt" id="auth-import-toggle"><span class="ic">📥</span> Import a private key</button>
@@ -144,7 +153,7 @@ const UI = (() => {
           <button class="btn small" id="auth-import-go">Import</button>
         </div>
       </div>
-      <p class="hint" id="auth-custodial-note">Google and X are convenience accounts: the gateway keeps your key <strong>encrypted</strong> and hands it to this browser when you sign in — you can export it any time on the Wallet page. A Local Wallet never leaves your device.</p>
+      <p class="hint" id="auth-custodial-note"><strong>Google</strong> opens the <strong>same wallet</strong> you have in Aurvania and on OURO — one address across every Koinos site. Google and X hand the key to this browser when you sign in, and you can export it any time on the Wallet page. A Local Wallet never leaves your device.</p>
       <div style="text-align:right;margin-top:14px"><button class="btn ghost small" id="auth-close">Close</button></div>`;
     document.body.appendChild(d);
     _modal = d;
@@ -172,7 +181,9 @@ const UI = (() => {
     const x = _cfg && _cfg.auth && _cfg.auth.x;
     $('#auth-x', d).hidden = !x;
     const g = $('#auth-google', d);
-    if (g) { g.hidden = !_googleReady; if (_googleReady) renderGoogleButton(); }
+    // Show our Google face as soon as Google is configured — the invisible
+    // click target attaches when GSI lands (or we mark it dead if it never does).
+    if (g) { g.hidden = !_googleConfigured; if (_googleConfigured) { renderGoogleButton(); armGoogleFallback(g); } }
     if (typeof d.showModal === 'function') d.showModal(); else d.setAttribute('open', '');
   }
 
@@ -186,6 +197,7 @@ const UI = (() => {
       try {
         window.google.accounts.id.initialize({
           client_id: clientId,
+          ux_mode: 'popup',
           callback: async (resp) => {
             try {
               const r = await Wallet.loginGoogle(resp.credential);
@@ -202,11 +214,41 @@ const UI = (() => {
     };
     document.head.appendChild(s);
   }
+
+  /* Only Google's own iframe may open the sign-in popup, and it cannot be
+     restyled — so we render it invisibly (opacity ~0) and stretch it over a
+     button that looks like the rest. The user sees our face; the click lands
+     on Google's iframe. (The pattern Aurvania / OURO already ship.) */
   function renderGoogleButton() {
     const g = _modal && $('#auth-google', _modal);
-    if (!g || !_googleReady || g.dataset.rendered) return;
-    try { window.google.accounts.id.renderButton(g, { theme: 'filled_black', size: 'large', width: 320, text: 'continue_with' }); g.dataset.rendered = '1'; }
-    catch (_) {}
+    const slot = g && $('#auth-google-slot', g);
+    if (!g || !slot || !_googleReady || slot.dataset.rendered) return;
+    try {
+      const w = Math.max(240, Math.min(420, Math.round(g.getBoundingClientRect().width) || 320));
+      window.google.accounts.id.renderButton(slot, {
+        theme: 'filled_black', size: 'large', text: 'continue_with', shape: 'rectangular', width: w,
+      });
+      slot.dataset.rendered = '1';
+      g.classList.remove('g-dead'); g.onclick = null;   // GSI arrived — the overlay is live
+    } catch (_) {}
+  }
+
+  /* If Google's script is blocked or never lands, don't leave a button that
+     looks clickable but isn't — mark it and explain on click. */
+  function armGoogleFallback(g) {
+    if (_googleReady || g.dataset.armed) return;
+    g.dataset.armed = '1';
+    let waited = 0;
+    (function tick() {
+      if (!g.isConnected) return;
+      if (_googleReady) { g.classList.remove('g-dead'); g.onclick = null; return; }
+      if ((waited += 200) > 8000) {
+        g.classList.add('g-dead');
+        g.onclick = () => toast('Google sign-in could not load — try another method, or check for script blockers', 'err');
+        return;
+      }
+      setTimeout(tick, 200);
+    })();
   }
 
   /* ---------------- X (Twitter) redirect return ---------------- */

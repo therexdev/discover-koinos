@@ -362,8 +362,24 @@ dialog.modal h3 { margin-top: 0; }
 .auth-opt .ic { font-size: 1.15rem; width: 22px; text-align: center; flex: none; }
 .auth-opt em { margin-left: auto; font-style: normal; font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--good); }
 .auth-opt.primary { background: linear-gradient(90deg, rgba(120,39,230,.28), rgba(142,68,173,.18)); border-color: var(--accent); }
-.auth-opt.g-slot { padding: 0; border: 0; background: transparent; min-height: 44px; justify-content: center; }
-.auth-opt.g-slot:hover { background: transparent; }
+/* Google: a face that matches the other buttons, with Google's own
+   (invisible) sign-in iframe stretched over it as the real click target —
+   only that iframe may open the popup, and it cannot be restyled. */
+.g-wrap { position: relative; }
+.g-wrap .ic { display: inline-flex; align-items: center; justify-content: center; }
+.g-wrap .g-mark { display: block; width: 18px; height: 18px; }
+.g-wrap:focus-within { border-color: var(--accent); background: var(--bg-card); }
+.g-wrap:active { transform: translateY(1px); }
+.g-overlay {
+  position: absolute; inset: 0; z-index: 2; overflow: hidden; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center; opacity: .001;
+}
+/* Google's button is a fixed height shorter than our face, which would
+   leave the top and bottom edges dead. A hair of scale spreads the hit area
+   over the whole face — it is invisible, so nothing distorts on screen. */
+.g-overlay > * { transform: scale(1.12); }
+/* GSI never loaded: the face takes the click itself and explains why. */
+.g-wrap.g-dead { opacity: .6; }
 #auth-import { display: flex; flex-direction: column; gap: 8px; padding: 4px 2px 0; }
 .login-modal .hint { margin-top: 16px; }
 
