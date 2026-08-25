@@ -53,7 +53,25 @@
     }
   });
 
-  /* ---- NFT card ---- */
+  /* ---- NFT card: Paint | New tabs ---- */
+  const hpTabs = [['hp-tab-paint', 'hp-pane-paint'], ['hp-tab-new', 'hp-pane-new']];
+  let hpUploadReady = false;
+  function hpSelect(id) {
+    hpTabs.forEach(([t, p]) => {
+      const on = t === id;
+      $('#' + t).setAttribute('aria-selected', String(on));
+      $('#' + p).hidden = !on;
+    });
+    if (id === 'hp-tab-new' && !hpUploadReady) {
+      hpUploadReady = true;
+      const mount = $('#hp-upload-mount');
+      mount.innerHTML = nftUploadHtml(true);
+      initNftUpload(mount, { onMinted: () => { paintWallet(); loadGallery(); } });
+    }
+  }
+  $('#hp-tab-paint').addEventListener('click', () => hpSelect('hp-tab-paint'));
+  $('#hp-tab-new').addEventListener('click', () => hpSelect('hp-tab-new'));
+
   const studio = PixelStudio($('#mini-studio'));
   $('#btn-mint').addEventListener('click', async () => {
     const btn = $('#btn-mint');
@@ -72,9 +90,11 @@
       const proof = await Wallet.proof('mint-nft');
       st.next(); st.next();
       const r = await Api.mintNft({ ...proof, name, palette: studio.palette(), cells: studio.grid() });
-      st.done(txLink(r.txid, r.explorer, r.demo));
+      st.done(txLink(r.txid, r.explorer, r.demo)
+        + (r.shareUrl ? `<div class="txline">share it: <a href="${escapeHtml(r.shareUrl)}" target="_blank" rel="noopener">${escapeHtml(r.shareUrl)}</a></div>` : ''));
       UI.markDone('nft');
       toast(`"${name}" is yours — ${r.code}`, 'ok');
+      Share.celebrate('nft', { url: r.shareUrl, name, image: r.image });
       loadGallery();
     } catch (e) {
       st.fail(e.message);
@@ -115,6 +135,7 @@
       );
       UI.markDone('token');
       toast(`${symbol} is live — ${r.supply} in your wallet`, 'ok');
+      Share.celebrate('token', { url: r.shareUrl, symbol });
     } catch (e) {
       st.fail(e.message);
     } finally {

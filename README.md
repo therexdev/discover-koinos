@@ -209,6 +209,23 @@ escrows only the tokens you list — no KOIN required; a buyer brings the KOIN.
 It's free (mana only). Trade Koinos is only deployed on mainnet, so the action
 is disabled on testnet.
 
+## The viral loop
+
+The gateway is built to convert each "aha" into an announcement:
+
+- After a mint, a token launch or a DEX listing, a **share modal** opens with a
+  prewritten (editable) message — one-tap post to X or Telegram, or copy.
+- Every NFT and token gets a **public share page** (`/n/DK00001`,
+  `/t/<address>`) whose link **unfurls with the actual artwork** (painted NFTs
+  are rendered to a real PNG social card by a zero-dependency encoder;
+  uploads use the stored raster). The page's only job is converting the person
+  who clicked: *"made free, no wallet, no fees — make yours."*
+- The **Build page** shows each visitor the things *they* made next to the
+  explanation of how it was free — ending on "tell someone."
+
+Set `PUBLIC_ORIGIN` in production so share links and OG images carry your
+domain.
+
 ## Security model
 
 - The browser key never leaves the device (backup/export is user-initiated).

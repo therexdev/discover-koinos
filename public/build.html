@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Build — Discover Koinos</title>
 <meta name="description" content="What actually happened when you clicked: mana sharing, payer/payee co-signing, contracts as accounts. Now build it yourself on Koinos.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Discover Koinos">
+<meta property="og:title" content="What just happened — Discover Koinos">
+<meta property="og:description" content="The machinery behind the free clicks: mana sharing, payer/payee co-signing, contracts as accounts.">
+<meta property="og:image" content="%%ORIGIN%%/assets/og-card.png">
+<meta property="og:url" content="%%ORIGIN%%/build">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="%%ORIGIN%%/assets/og-card.png">
 <link rel="icon" href="/assets/brand/Koinos-Icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -32,9 +40,9 @@
 <main class="wrap section">
   <div class="section-head">
     <h1>What just happened</h1>
-    <p>Everything you clicked was a real blockchain interaction. No test doubles, no
-      "simulated environment" — the transaction ids link to a public explorer because
-      they exist. Here's the machinery, in four ideas.</p>
+    <p>Everything you clicked was a real blockchain interaction — and it's all still here,
+      in your wallet. Below: the things <strong>you</strong> made, each beside the
+      machinery that made it free.</p>
   </div>
 
   <div class="explain">
@@ -46,6 +54,7 @@
         there is nothing to register — on Koinos, holding a key IS having an account.</p>
       <pre class="code"><span class="k">const</span> signer = <span class="k">new</span> Signer({ privateKey });
 <span class="k">const</span> address = signer.getAddress(); <span class="c">// that's it. that's the account.</span></pre>
+      <div class="yours" id="yours-wallet" hidden></div>
     </div>
 
     <div class="x">
@@ -62,16 +71,18 @@
   payer: sponsorWallet,   <span class="c">// their mana burns (and regenerates)</span>
   payee: yourAddress,     <span class="c">// your nonce, your authority</span>
 }})</pre>
+      <div class="yours" id="yours-mana" hidden></div>
     </div>
 
     <div class="x">
       <div class="n">03 · the NFT</div>
       <h3>Contracts are accounts</h3>
-      <p>Your pixel art went into the <em>Discover Koinos Playground</em> collection — a
+      <p>Your art goes into the <em>Discover Koinos Paint</em> collection — a
         KCS-2 contract. On Koinos a contract is just an account with WASM uploaded to it,
         and it can act as itself: the collection authorized your free mint with its own
         signature while the sponsor paid. The image? Stored on-chain, in the token's
         metadata, as an SVG your grandchildren can still decode.</p>
+      <div class="yours" id="yours-nft" hidden></div>
     </div>
 
     <div class="x">
@@ -83,6 +94,7 @@
         sponsor's mana absorbed it, and the whole supply landed in your wallet.</p>
       <pre class="code">{ upload_contract: { contract_id, bytecode } }  <span class="c">// tx 1</span>
 initialize({ name, symbol, decimals, supply })  <span class="c">// tx 2 — yours</span></pre>
+      <div class="yours" id="yours-token" hidden></div>
     </div>
   </div>
 
@@ -91,6 +103,7 @@ initialize({ name, symbol, decimals, supply })  <span class="c">// tx 2 — your
       <h2>Now build the next thing</h2>
       <p>Everything you just used is open source — including this gateway.</p>
     </div>
+    <button class="btn big" id="btn-share-site">📣 Tell someone about this</button>
   </div>
 
   <div class="cards">
@@ -151,6 +164,7 @@ initialize({ name, symbol, decimals, supply })  <span class="c">// tx 2 — your
 <script src="/js/api.js"></script>
 <script src="/js/wallet.js"></script>
 <script src="/js/ui.js"></script>
+<script src="/js/share.js"></script>
 <script src="/js/build-page.js"></script>
 </body>
 </html>

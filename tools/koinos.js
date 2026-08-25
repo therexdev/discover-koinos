@@ -464,11 +464,23 @@ async function mintNft(to, tokenIdHex, metadataJson) {
     The collection authorizes mint by owner OR its own account, and we sign
     as the collection. */
 async function mintToCollection(collectionWif, to, tokenIdHex, metadataJson) {
+  return mintManyToCollection(collectionWif, to, [{ tokenId: tokenIdHex, metadata: metadataJson }]);
+}
+
+/** Batch-mint several NFTs into one collection in a SINGLE transaction —
+    a 10-image upload is one broadcast and one wait, not ten. rc_limit
+    scales with the op count (it's a ceiling, not a charge). */
+async function mintManyToCollection(collectionWif, to, items) {
   const key = Signer.fromWif(collectionWif);
   const c = collectionContractAt(key.getAddress(), key);
-  const { operation: mintOp } = await c.functions.mint({ to, token_id: tokenIdHex }, { onlyOperation: true });
-  const { operation: metaOp } = await c.functions.set_metadata({ token_id: tokenIdHex, metadata: metadataJson }, { onlyOperation: true });
-  return sendAsAccount(key, [mintOp, metaOp]);
+  const ops = [];
+  for (const it of items) {
+    const { operation: mintOp } = await c.functions.mint({ to, token_id: it.tokenId }, { onlyOperation: true });
+    const { operation: metaOp } = await c.functions.set_metadata({ token_id: it.tokenId, metadata: it.metadata }, { onlyOperation: true });
+    ops.push(mintOp, metaOp);
+  }
+  const rcLimit = String(Math.min(30e8, Math.max(5e8, 3e8 * items.length)));
+  return sendAsAccount(key, ops, { rcLimit });
 }
 
 /** Has this collection been initialized on-chain? (get_info answers with a
@@ -695,7 +707,7 @@ module.exports = {
   opKoinTransfer, opNftMint, opNftSetMetadata, opNftTransfer,
   opTokenTransfer, opTokenMint, opTokenBurn, opUploadContract, opTokenInitialize,
   devTx, sendAsAccount, prepareUserTx, submitCosigned, queueTx,
-  mintNft, mintToCollection, launchToken, launchCollection, newAccount,
+  mintNft, mintToCollection, mintManyToCollection, launchToken, launchCollection, newAccount,
   tokenInitialized, collectionInitializedAt,
   toDexPrice, dexMarketId, ensureDexMarket, opsDexSell,
   verifyAuthSignature, codeToTokenId, tokenIdToCode,

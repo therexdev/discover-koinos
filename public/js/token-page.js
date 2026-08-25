@@ -90,6 +90,7 @@
       );
       UI.markDone('token');
       toast(`${symbol} is live — ${r.supply} in your wallet`, 'ok');
+      Share.celebrate('token', { url: r.shareUrl, symbol });
       loadMine(); loadCommunity();
     } catch (e) {
       st.fail(e.message);
@@ -148,6 +149,9 @@
         const r = await Api.submit({ ref: prep.ref, transaction: signed });
         st.done(txLink(r.txid, r.explorer, r.demo) + `<div class="txline">listed on Trade Koinos${prep.explorerAddr ? ` — <a href="${escapeHtml(prep.explorerAddr)}" target="_blank" rel="noopener">orderbook ↗</a>` : ''}</div>`);
         toast('Listed on Trade Koinos — a buyer brings the KOIN', 'ok');
+        const sym = ($('#act-select option:checked').textContent.split(' ')[0] || 'TOKEN').replace('—','').trim();
+        Share.celebrate('dex', { url: prep.shareUrl, symbol: sym });
+        loadMine();
       } catch (e) { st.fail(e.message); } finally { btn.disabled = false; }
       return;
     }

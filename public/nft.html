@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NFT Studio — Discover Koinos</title>
 <meta name="description" content="Draw pixel art and mint it as a real NFT on Koinos — free, no gas, no wallet extension. Then send it to a friend.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Discover Koinos">
+<meta property="og:title" content="NFT Studio — Discover Koinos">
+<meta property="og:description" content="Paint or upload — mint a real NFT on Koinos, free, no wallet setup, no gas.">
+<meta property="og:image" content="%%ORIGIN%%/assets/og-card.png">
+<meta property="og:url" content="%%ORIGIN%%/nft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="%%ORIGIN%%/assets/og-card.png">
 <link rel="icon" href="/assets/brand/Koinos-Icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -74,22 +82,8 @@
         <div class="card-icon">🖼️</div>
         <div><h3>Upload an image</h3><p class="sub">Mint into <strong>your own</strong> collection</p></div>
       </div>
-      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Choose or drop an image">
-        <div id="dz-empty"><div style="font-size:2rem">⬆️</div><p style="margin:.4em 0 0">Click or drop an image<br><span class="hint">PNG, JPEG, GIF or WebP · up to 3MB</span></p></div>
-        <img class="upload-preview" id="dz-preview" alt="" hidden>
-        <input type="file" id="file-input" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
-      </div>
-      <label class="field">Collection
-        <select class="input" id="coll-select"><option value="__new">+ New collection…</option></select>
-      </label>
-      <label class="field" id="coll-name-field">New collection name
-        <input type="text" id="coll-name" maxlength="64" placeholder="My Art Collection" autocomplete="off">
-      </label>
-      <label class="field">NFT name
-        <input type="text" id="up-name" maxlength="48" placeholder="Untitled #1" autocomplete="off">
-      </label>
-      <div class="status" id="up-status"></div>
-      <button class="btn" id="btn-upload-mint">Mint it — free</button>
+      <div id="upload-mount"></div>
+      
       <p class="hint">A new collection deploys a real KCS-2 contract you own — bigger than a mint, so it counts against a small daily budget. It auto-lists on <strong>OURO</strong> when you're live on mainnet.</p>
     </div>
 
@@ -140,6 +134,8 @@
 <script src="/js/api.js"></script>
 <script src="/js/wallet.js"></script>
 <script src="/js/ui.js"></script>
+<script src="/js/share.js"></script>
+<script src="/js/upload-widget.js"></script>
 <script src="/js/studio.js"></script>
 <script src="/js/nft-page.js"></script>
 </body>

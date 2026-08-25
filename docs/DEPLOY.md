@@ -89,16 +89,81 @@ starts with an empty registry. Two options:
   is the one file that matters: it holds each launched token's upgrade
   authority.
 
-## 5. Go-live checklist (mainnet)
+## 5. Go live on MAINNET — the full runbook
 
-- [ ] Fund the DEV wallet with real KOIN (mana ceiling = balance; each token
-      launch consumes ~46 KOIN of mana that recharges over ~5 days)
-- [ ] `KOINOS_NETWORK=mainnet node scripts/deploy-playground.js gateway.env`
-- [ ] Flip `KOINOS_NETWORK=mainnet` in Hostinger env vars, redeploy
-- [ ] Sanity-check `/api/config` shows `"network":"mainnet"`, `"demo":false`
-- [ ] Lower `MAX_LAUNCHES_PER_DAY` to what the wallet can actually sponsor
-- [ ] Watch the boot log: it prints the sponsor balance/mana and verifies the
-      collection contract answers `get_info`
+Everything below is one afternoon. The chain usage itself is free (mana, not
+fees) — but mana ceiling = the KOIN the sponsor wallet *holds*, so going live
+means parking real KOIN in the DEV wallet. It is never spent as fees; it is
+collateral that recharges ~20%/day.
+
+**How much KOIN:** the one-time Paint-collection deploy eats ~46 KOIN of mana.
+Each user token launch or new Upload collection also eats ~46. Comfortable
+start: **~150 KOIN** in the DEV wallet (≈ 2 launches/day sustainable, more as
+it recharges). With 100 KOIN you can still run; set `MAX_LAUNCHES_PER_DAY=1`
+and `MAX_COLLECTIONS_PER_DAY=1` for the first days.
+
+### Step by step
+
+```bash
+# 1. keys (skip if you already made gateway.env — SAME keys work on mainnet)
+node tools/keygen.js
+
+# 2. send real KOIN to the DEV address it printed (~150 KOIN recommended)
+
+# 3. deploy the "Discover Koinos Paint" collection on mainnet
+KOINOS_NETWORK=mainnet node scripts/deploy-playground.js gateway.env
+#    → prints GATEWAY_COLLECTION_ADDR when done (idempotent; re-run if it fails)
+```
+
+**4. Hostinger env vars** (App settings → Environment), then redeploy:
+
+```
+KOINOS_NETWORK=mainnet
+GATEWAY_DEV_WIF=<from gateway.env>
+GATEWAY_COLLECTION_WIF=<from gateway.env>
+GATEWAY_COLLECTION_ADDR=<printed by step 3>
+PUBLIC_ORIGIN=https://your-domain.com     ← required for share links + OG images
+TRUST_PROXY_HOPS=1
+MAX_LAUNCHES_PER_DAY=2
+MAX_COLLECTIONS_PER_DAY=2
+```
+
+**5. Verify** — `https://your-domain.com/api/config` must show
+`"network":"mainnet"`, `"demo":false`. The boot log prints the sponsor
+balance/mana, the Paint collection's `get_info`, and
+`dex: Trade Koinos 1Bke72aGbpq4brDY3m1UQxRCGBB9GPTJQz`.
+
+### What switches on automatically on mainnet
+
+- **OURO auto-listing** — the Paint collection registers itself on OURO at
+  boot, and every user Upload collection registers as it's created
+  (`POST https://ouro.lifestyle/api/collections`, free, no key needed). OURO
+  rate-limits registrations to 10/day/IP; if the gateway gets busy, ask the
+  OURO operator for the admin key and set `OURO_ADMIN_KEY`.
+- **Trade Koinos DEX listing** — the "List on Trade Koinos DEX" action goes
+  live (the orderbook only exists on mainnet). Listing = create the
+  TOKEN/KOIN market (gateway pays mana) + the user's SELL order (escrows only
+  their tokens). Verify a listing at https://app.tradekoinos.com/.
+
+### First-hour smoke test (with a throwaway browser profile)
+
+- [ ] Create a Local Wallet, paint + mint an NFT → txid opens on koinosblocks
+- [ ] Open its `/n/<code>` share link → page renders, paste the link into X/
+      Telegram → the card unfurls with the artwork
+- [ ] Upload 2–3 images as a new collection → collection appears on OURO
+      (`https://ouro.lifestyle/#/c/<collection address>`)
+- [ ] Launch a token → `/t/<address>` share page renders; contract on explorer
+- [ ] List it on Trade Koinos at a small price → order visible on
+      app.tradekoinos.com
+- [ ] Watch sponsor mana in the boot log / `/api/stats` — each action should
+      cost ~0.5–1.5 KOIN of mana except deploys (~46)
+
+### Ongoing
+
+- Mana is the throttle: if `/api/stats` shows sponsorMana sagging, raise the
+  wallet balance or lower the daily caps.
+- `data/` (registry + launched-token/collection keys + uploaded images) must
+  survive redeploys — see the persistence note in §4.
 
 ## Troubleshooting
 

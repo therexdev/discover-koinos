@@ -16,7 +16,7 @@
     });
   }
   $('#tab-paint').addEventListener('click', () => selectTab('tab-paint'));
-  $('#tab-upload').addEventListener('click', () => { selectTab('tab-upload'); loadCollections(); });
+  $('#tab-upload').addEventListener('click', () => selectTab('tab-upload'));
 
   /* ---------------- paint (shared collection) ---------------- */
   const studio = PixelStudio($('#studio'));
@@ -40,81 +40,15 @@
       st.done(txLink(r.txid, r.explorer, r.demo));
       UI.markDone('nft');
       toast(`"${name}" minted — ${r.code}`, 'ok');
+      Share.celebrate('nft', { url: r.shareUrl, name, image: r.image });
       loadMine(); loadCommunity();
     } catch (e) { st.fail(e.message); } finally { btn.disabled = false; }
   });
 
-  /* ---------------- upload (your own collection) ---------------- */
-  let currentImage = null;
-  const dz = $('#dropzone'), fileInput = $('#file-input');
-  const preview = $('#dz-preview'), dzEmpty = $('#dz-empty');
-
-  function acceptFile(file) {
-    if (!file) return;
-    if (!/^image\/(png|jpe?g|gif|webp)$/.test(file.type)) { toast('Use a PNG, JPEG, GIF or WebP image', 'err'); return; }
-    if (file.size > 3 * 1024 * 1024) { toast('That image is over 3MB — pick a smaller one', 'err'); return; }
-    const reader = new FileReader();
-    reader.onload = () => { currentImage = reader.result; preview.src = reader.result; preview.hidden = false; dzEmpty.hidden = true; };
-    reader.onerror = () => toast('Could not read that file', 'err');
-    reader.readAsDataURL(file);
-  }
-  dz.addEventListener('click', () => fileInput.click());
-  dz.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
-  fileInput.addEventListener('change', () => acceptFile(fileInput.files[0]));
-  ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('drag'); }));
-  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('drag'); }));
-  dz.addEventListener('drop', (e) => { if (e.dataTransfer.files[0]) acceptFile(e.dataTransfer.files[0]); });
-
-  const collSelect = $('#coll-select');
-  collSelect.addEventListener('change', () => {
-    $('#coll-name-field').style.display = collSelect.value === '__new' ? '' : 'none';
-  });
-
-  async function loadCollections() {
-    const addr = Wallet.address();
-    if (!addr) return;
-    try {
-      const { collections } = await Api.collections(addr);
-      const own = collections.filter(c => c.kind !== 'paint');
-      const cur = collSelect.value;
-      collSelect.innerHTML = '<option value="__new">+ New collection…</option>' +
-        own.map(c => `<option value="${escapeHtml(c.address)}">${escapeHtml(c.name)} (${escapeHtml(c.symbol)})${c.ouro ? ' · on OURO' : ''}</option>`).join('');
-      if ([...collSelect.options].some(o => o.value === cur)) collSelect.value = cur;
-      collSelect.dispatchEvent(new Event('change'));
-    } catch (_) {}
-  }
-
-  $('#btn-upload-mint').addEventListener('click', async () => {
-    const btn = $('#btn-upload-mint');
-    const name = $('#up-name').value.trim();
-    const isNew = collSelect.value === '__new';
-    const collectionName = $('#coll-name').value.trim();
-    if (!currentImage) { toast('Choose an image first', 'err'); return; }
-    if (!name) { toast('Name your NFT', 'err'); $('#up-name').focus(); return; }
-    if (isNew && !collectionName) { toast('Name your new collection', 'err'); $('#coll-name').focus(); return; }
-    try { UI.ensureAccount(); } catch (_) { return; }
-    btn.disabled = true;
-    const st = statusStepper($('#up-status'), [
-      'Signing with your key — locally, silently',
-      isNew ? 'Deploying your collection contract…' : 'Minting into your collection…',
-      'Storing the image + on-chain metadata…',
-    ]);
-    try {
-      st.next();
-      const proof = await Wallet.proof('upload-nft');
-      st.next(); st.next();
-      const body = { ...proof, name, image: currentImage };
-      if (isNew) body.collectionName = collectionName; else body.collection = collSelect.value;
-      const r = await Api.uploadNft(body);
-      let extra = '';
-      if (r.createdCollection) extra += `<div class="txline">new collection: ${escapeHtml(r.createdCollection.name)} (${escapeHtml(r.createdCollection.symbol)})${r.collectionOuroUrl ? ` — <a href="${escapeHtml(r.collectionOuroUrl)}" target="_blank" rel="noopener">on OURO ↗</a>` : ''}</div>`;
-      st.done(extra + txLink(r.txid, r.explorer, r.demo));
-      UI.markDone('nft');
-      toast(`"${name}" minted`, 'ok');
-      currentImage = null; preview.hidden = true; dzEmpty.hidden = false; fileInput.value = '';
-      loadCollections(); loadMine(); loadCommunity();
-    } catch (e) { st.fail(e.message); } finally { btn.disabled = false; }
-  });
+  /* ---------------- upload (your own collection) — shared widget ---- */
+  const mount = $('#upload-mount');
+  mount.innerHTML = nftUploadHtml(false);
+  initNftUpload(mount, { onMinted: () => { loadMine(); loadCommunity(); } });
 
   /* ---------------- personal gallery + transfer ---------------- */
   async function loadMine() {

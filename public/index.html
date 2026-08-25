@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Discover Koinos — don't read about it, use it</title>
 <meta name="description" content="Create a wallet, mint an NFT and launch a token — live on the Koinos blockchain, in under a minute, without paying a cent. No signup, no gas, no wallet extension.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Discover Koinos">
+<meta property="og:title" content="Discover Koinos — don’t read about it, use it">
+<meta property="og:description" content="Create a wallet, mint an NFT and launch a token — live on the Koinos blockchain, free. No signup, no gas, no wallet extension.">
+<meta property="og:image" content="%%ORIGIN%%/assets/og-card.png">
+<meta property="og:url" content="%%ORIGIN%%/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="%%ORIGIN%%/assets/og-card.png">
 <link rel="icon" href="/assets/brand/Koinos-Icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -93,6 +101,11 @@
           <div class="card-icon">🎨</div>
           <div><h3>Mint your first NFT</h3><p class="sub">Draw it. Own it. On-chain in seconds.</p></div>
         </div>
+        <div class="tabs mini" role="tablist" aria-label="Create your NFT">
+          <button role="tab" id="hp-tab-paint" aria-selected="true" aria-controls="hp-pane-paint">🎨 Paint</button>
+          <button role="tab" id="hp-tab-new" aria-selected="false" aria-controls="hp-pane-new">✨ New</button>
+        </div>
+        <div id="hp-pane-paint">
         <div class="studio" id="mini-studio">
           <canvas aria-label="Pixel art canvas — draw with your pointer"></canvas>
           <div class="palette" role="group" aria-label="Colors"></div>
@@ -108,6 +121,8 @@
         </label>
         <div class="status" id="nft-status"></div>
         <button class="btn" id="btn-mint">Mint it — free</button>
+        </div>
+        <div id="hp-pane-new" hidden><div id="hp-upload-mount"></div></div>
         <p class="more"><a href="/nft">Bigger studio, your gallery, send to a friend →</a></p>
       </div>
 
@@ -176,6 +191,8 @@
 <script src="/js/api.js"></script>
 <script src="/js/wallet.js"></script>
 <script src="/js/ui.js"></script>
+<script src="/js/share.js"></script>
+<script src="/js/upload-widget.js"></script>
 <script src="/js/studio.js"></script>
 <script src="/js/index-page.js"></script>
 </body>

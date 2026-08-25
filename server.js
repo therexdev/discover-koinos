@@ -27,6 +27,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const chain = require('./tools/koinos');
 const { pickRpc, NETWORKS } = require('./tools/rpc');
+const { nftCardPng } = require('./tools/png');
 
 /* ---------------- configuration ---------------- */
 
@@ -331,6 +332,17 @@ function applyConfirmed(meta) {
     const rec = registry.nfts.find(n => n.tokenId === meta.tokenId && n.owner === meta.from);
     if (rec) { rec.owner = meta.to; saveNfts(); }
   }
+  if (meta.action === 'dex_listed') {
+    const rec = registry.tokens.find(t => t.address === meta.token);
+    if (rec) { rec.dex = { amount: meta.amount, price: meta.price, ts: Date.now() }; saveTokens(); }
+  }
+}
+
+/** An NFT record as the API shows it — without the raw paint grid (kept
+    only for rendering raster social cards). */
+function pubNft(n) {
+  const { art, ...rest } = n;
+  return rest;
 }
 
 /* ---------------- pixel art -> SVG ----------------
@@ -448,7 +460,7 @@ api.account = async (params) => {
   const address = params.get('address');
   if (!chain.isAddr(address)) throw httpError(400, 'a valid Koinos address is required');
   const mine = {
-    nfts: registry.nfts.filter(n => n.owner === address),
+    nfts: registry.nfts.filter(n => n.owner === address).map(pubNft),
     tokens: registry.tokens.filter(t => t.owner === address),
     collections: myCollections(address).filter(c => c.kind !== 'paint'),
   };
@@ -479,7 +491,7 @@ api.collections = async (params) => {
 
 api.gallery = async () => ({
   ok: true,
-  nfts: registry.nfts.slice(-24).reverse(),
+  nfts: registry.nfts.slice(-24).reverse().map(pubNft),
   tokens: registry.tokens.slice(-24).reverse(),
   collections: registry.collections.slice(-24).reverse().map(c => ({
     address: c.address, name: c.name, symbol: c.symbol, kind: c.kind,
@@ -503,7 +515,7 @@ api.auth = async (body, ip) => {
   throw httpError(400, 'unknown action');
 };
 
-api.mintNft = async (body, ip) => {
+api.mintNft = async (body, ip, req) => {
   const err = verifyProof(body, 'mint-nft');
   if (err) throw httpError(400, err);
   const address = body.address;
@@ -538,12 +550,18 @@ api.mintNft = async (body, ip) => {
       finally { releaseMana(); }
     }
   } catch (e) { releaseDaily(); throw e; }
-  const rec = { code, tokenId, name, image, collection: CFG.collectionAddr || null, collectionName: PAINT_NAME, owner: address, txid, ts: Date.now(), demo: DEMO || undefined };
+  const rec = {
+    code, tokenId, name, image, collection: CFG.collectionAddr || null, collectionName: PAINT_NAME,
+    owner: address, txid, ts: Date.now(), demo: DEMO || undefined,
+    /* the raw grid, kept so /og/nft/<code>.png can render a raster social
+       card (X/Telegram won't unfurl SVG). Stripped from API payloads. */
+    art: { palette: body.palette, cells: body.cells },
+  };
   registry.nfts.push(rec); saveNfts();
-  return { ok: true, ...rec, explorer: DEMO ? null : explorerTx(txid) };
+  return { ok: true, ...pubNft(rec), explorer: DEMO ? null : explorerTx(txid), shareUrl: originFor(req) + '/n/' + rec.code };
 };
 
-api.launchToken = async (body, ip) => {
+api.launchToken = async (body, ip, req) => {
   const err = verifyProof(body, 'launch-token');
   if (err) throw httpError(400, err);
   const address = body.address;
@@ -603,6 +621,7 @@ api.launchToken = async (body, ip) => {
     ok: true, ...rec,
     explorer: DEMO ? null : explorerAddr(address2),
     explorerTx: DEMO ? null : explorerTx(rec.txid),
+    shareUrl: originFor(req) + '/t/' + address2,
   };
 };
 
@@ -618,10 +637,17 @@ api.uploadNft = async (body, ip, req) => {
   const address = body.address;
   const nftName = cleanText(body.name, 48);
   if (!nftName) throw httpError(400, 'give your NFT a name');
+
+  /* One image or a batch of up to 10. A batch gets NAME #1 … NAME #N. */
+  const rawImages = Array.isArray(body.images) ? body.images : (body.image ? [body.image] : []);
+  if (!rawImages.length) throw httpError(400, 'choose at least one image');
+  if (rawImages.length > 10) throw httpError(400, 'up to 10 images per mint');
+
   if (rateLimited('upload:addr:' + address, 8, 24 * 3600000)) throw httpError(429, 'that account has uploaded a lot today — come back tomorrow');
   if (rateLimited('upload:ip:' + ip, 15, 24 * 3600000)) throw httpError(429, 'too many uploads from this connection today');
 
-  const { buf, ext, mime } = decodeUploadImage(body.image);
+  // Validate EVERY image before touching budgets or the chain.
+  const images = rawImages.map((d) => decodeUploadImage(d));
 
   // Resolve the target collection.
   let coll = null;
@@ -632,10 +658,20 @@ api.uploadNft = async (body, ip, req) => {
     if (coll.kind === 'paint') throw httpError(400, 'the Paint collection is for painted NFTs — pick or create your own collection for uploads');
   }
 
-  // Reserve the daily mint slot up front (id + budget), before any await.
-  const releaseMintDaily = reserveDaily('mints', CFG.maxMintsPerDay);
-  if (!releaseMintDaily) throw httpError(503, 'the playground hit today’s mint budget — come back tomorrow');
-  const seq = nextSeq();
+  // Reserve one daily mint slot PER IMAGE up front, before any await.
+  const releases = [];
+  for (let i = 0; i < images.length; i++) {
+    const r = reserveDaily('mints', CFG.maxMintsPerDay);
+    if (!r) {
+      releases.forEach(x => x());
+      throw httpError(503, images.length > 1
+        ? 'not enough of today’s mint budget left for that many — try fewer, or come back tomorrow'
+        : 'the playground hit today’s mint budget — come back tomorrow');
+    }
+    releases.push(r);
+  }
+  const releaseMintDaily = () => releases.forEach(x => x());
+  const seqs = images.map(() => nextSeq());
 
   let createdCollection = null, releaseColDaily = null;
   try {
@@ -669,32 +705,47 @@ api.uploadNft = async (body, ip, req) => {
       }).catch(() => {});
     }
 
-    // Store the image and mint into the collection.
-    const fileId = storeUpload(buf, ext);
-    const imageUrl = originFor(req) + '/uploads/' + fileId;
-    const code = coll.symbol + '-' + seq;
-    const tokenId = chain.codeToTokenId(code);
-    const metadata = JSON.stringify({ name: nftName, image: imageUrl, description: `Minted at Discover Koinos by ${address}` });
+    // Store every image, build every mint, then mint the whole batch in
+    // ONE transaction — ten NFTs is one broadcast and one wait.
+    const origin = originFor(req);
+    const items = images.map((img, i) => {
+      const fileId = storeUpload(img.buf, img.ext);
+      const imageUrl = origin + '/uploads/' + fileId;
+      const name = images.length > 1 ? `${nftName} #${i + 1}` : nftName;
+      const code = coll.symbol + '-' + seqs[i];
+      return {
+        code, tokenId: chain.codeToTokenId(code), name, imageUrl, mime: img.mime,
+        metadata: JSON.stringify({ name, image: imageUrl, description: `Minted at Discover Koinos by ${address}` }),
+      };
+    });
 
     let txid;
     if (DEMO || coll.demo) { txid = demoTxid(); }
     else {
-      const releaseMana = await reserveMana(COST_MINT, CFG.minManaMint,
+      const releaseMana = await reserveMana(COST_MINT * items.length, CFG.minManaMint,
         () => httpError(503, 'the sponsor wallet is recharging its mana — try again in a few minutes'));
-      try { txid = await chain.mintToCollection(collectionKeys[coll.address], address, tokenId, metadata); }
-      finally { releaseMana(); }
+      try {
+        txid = await chain.mintManyToCollection(collectionKeys[coll.address], address,
+          items.map(it => ({ tokenId: it.tokenId, metadata: it.metadata })));
+      } finally { releaseMana(); }
     }
-    const rec = {
-      code, tokenId, name: nftName, image: imageUrl, mime,
+
+    const isDemo = (DEMO || coll.demo) || undefined;
+    const recs = items.map(it => ({
+      code: it.code, tokenId: it.tokenId, name: it.name, image: it.imageUrl, mime: it.mime,
       collection: coll.address, collectionName: coll.name,
-      owner: address, txid, ts: Date.now(), demo: (DEMO || coll.demo) || undefined,
-    };
-    registry.nfts.push(rec); saveNfts();
+      owner: address, txid, ts: Date.now(), demo: isDemo,
+    }));
+    registry.nfts.push(...recs); saveNfts();
+    const first = recs[0];
     return {
-      ok: true, ...rec,
-      explorer: (DEMO || coll.demo) ? null : explorerTx(txid),
+      ok: true, ...first,
+      count: recs.length,
+      minted: recs.map(r => ({ code: r.code, name: r.name, image: r.image, shareUrl: origin + '/n/' + r.code })),
+      explorer: isDemo ? null : explorerTx(txid),
       collectionOuroUrl: coll.ouro ? ouroCollectionUrl(coll.address) : null,
       createdCollection: createdCollection ? { address: coll.address, name: coll.name, symbol: coll.symbol } : null,
+      shareUrl: origin + '/n/' + first.code,
     };
   } catch (e) {
     releaseMintDaily(); if (releaseColDaily) releaseColDaily();
@@ -707,7 +758,7 @@ api.uploadNft = async (body, ip, req) => {
    permissionless), then hand back a SELL order for the visitor to sign that
    escrows only their own token. Mainnet only. Uses the prepare/submit
    round-trip — the returned ref is redeemed via /api/submit. */
-api.listDex = async (body, ip) => {
+api.listDex = async (body, ip, req) => {
   const err = verifyProof(body, 'list-dex');
   if (err) throw httpError(400, err);
   const address = body.address;
@@ -728,9 +779,14 @@ api.listDex = async (body, ip) => {
     throw httpError(400, 'that amount × price rounds to zero KOIN — raise one of them');
   }
 
+  const dexMeta = {
+    action: 'dex_listed', token: rec.address,
+    amount: String(body.amount), price: String(body.price),
+  };
+  const shareUrl = originFor(req) + '/t/' + rec.address;
   if (DEMO) {
-    const ref = rememberPrepared('demo', address);
-    return { ok: true, demo: true, ref, tx: { id: 'demo' }, dex: 'Trade Koinos' };
+    const ref = rememberPrepared('demo', address, dexMeta);
+    return { ok: true, demo: true, ref, tx: { id: 'demo' }, dex: 'Trade Koinos', shareUrl };
   }
   if (!chain.dexEnabled() || NETWORKS[CFG.network].testnet) {
     throw httpError(400, 'Trade Koinos is only deployed on mainnet — token DEX listing is available once you go live on mainnet');
@@ -743,8 +799,8 @@ api.listDex = async (body, ip) => {
 
   const ops = await chain.opsDexSell(rec.address, address, marketId, priceUnits, quantityUnits);
   const tx = await chain.prepareUserTx(address, ops);
-  const ref = rememberPrepared(tx.id, address);
-  return { ok: true, ref, tx, marketId, dex: 'Trade Koinos', explorerAddr: explorerAddr(chain.K.dexOrderbook) };
+  const ref = rememberPrepared(tx.id, address, dexMeta);
+  return { ok: true, ref, tx, marketId, dex: 'Trade Koinos', explorerAddr: explorerAddr(chain.K.dexOrderbook), shareUrl };
 };
 
 /* Prepared user transactions: the visitor's OWN assets moving, so the
@@ -829,6 +885,138 @@ function explorerAddr(addr) {
   return net.explorer ? `${net.explorer}/address/${addr}` : null;
 }
 
+/* ---------------- public share pages ----------------
+   The viral loop: someone posts their NFT/token link, the link UNFURLS
+   with the actual artwork (OG tags + a raster card), and the page that
+   opens exists to convert the friend: "made free, no wallet, no fees —
+   make yours". Server-rendered, everything user-authored escaped. */
+
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function sharePageShell({ origin, path, title, desc, ogImage, bodyHtml }) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)}</title>
+<meta name="description" content="${esc(desc)}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Discover Koinos">
+<meta property="og:title" content="${esc(title)}">
+<meta property="og:description" content="${esc(desc)}">
+<meta property="og:image" content="${esc(ogImage)}">
+<meta property="og:url" content="${esc(origin + path)}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="${esc(ogImage)}">
+<link rel="icon" href="/assets/brand/Koinos-Icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Plus+Jakarta+Sans:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+  <a class="logo" href="/"><img src="/assets/brand/koinos-logomark-white.svg" alt="Koinos"><span>Discover <span class="logo-sub">Koinos</span></span></a>
+</div></header>
+<main class="wrap section" style="max-width:760px">${bodyHtml}</main>
+<footer class="site-footer"><div class="wrap">
+  <img src="/assets/brand/koinos-logo-white.svg" alt="Koinos">
+  <nav class="foot-links"><a href="/">Discover Koinos</a><a href="https://koinos.io" target="_blank" rel="noopener">koinos.io</a></nav>
+</div></footer>
+</body></html>`;
+}
+
+function sendShareHtml(res, html) {
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-cache',
+    'Content-Security-Policy': CSP,
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(html);
+}
+
+function sharePageNft(req, res, code) {
+  const rec = registry.nfts.find(n => n.code === code);
+  if (!rec) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('no such NFT'); }
+  const origin = originFor(req);
+  const ogImage = rec.art
+    ? `${origin}/og/nft/${encodeURIComponent(rec.code)}.png`
+    : (/^https?:\/\//.test(rec.image) ? rec.image : `${origin}/assets/og-card.png`);
+  const title = `"${rec.name}" — minted free on Koinos`;
+  const desc = 'Made in a browser with no wallet setup, no gas fees and no technical experience — a real on-chain NFT. Make yours in under a minute, free.';
+  const body = `
+    <div style="text-align:center">
+      <img src="${esc(rec.image)}" alt="${esc(rec.name)}" style="width:min(380px,80vw);aspect-ratio:1;image-rendering:pixelated;border-radius:14px;border:1px solid var(--line-strong);background:var(--bg-inset)">
+      <h1 style="margin-top:22px">${esc(rec.name)}</h1>
+      <p class="sub" style="color:var(--text-dim)">
+        A real on-chain NFT in <strong>${esc(rec.collectionName || 'a Koinos collection')}</strong>,
+        minted by <code>${esc(UIshort(rec.owner))}</code> — with <strong>no wallet setup, no gas fees, no signup</strong>.
+        ${rec.demo ? '<br><em>(demo — this instance is not chain-connected yet)</em>' : ''}
+      </p>
+      <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:26px">
+        <a class="btn big" href="/nft">Make yours — it&#39;s free</a>
+        <a class="btn big ghost" href="/">How is this free?</a>
+      </div>
+      ${rec.txid && !rec.demo && explorerTx(rec.txid) ? `<p class="hint" style="margin-top:18px"><a href="${esc(explorerTx(rec.txid))}" target="_blank" rel="noopener">verify it on-chain ↗</a></p>` : ''}
+    </div>`;
+  sendShareHtml(res, sharePageShell({ origin, path: '/n/' + rec.code, title, desc, ogImage, bodyHtml: body }));
+}
+
+function sharePageToken(req, res, addr) {
+  const rec = registry.tokens.find(t => t.address === addr);
+  if (!rec) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('no such token'); }
+  const origin = originFor(req);
+  const title = `$${rec.symbol} — a token launched free on Koinos`;
+  const desc = `"${rec.name}" ($${rec.symbol}) — a real KCS-4 token contract, deployed from a browser with no wallet, no fees and no technical experience. Launch yours in one click, free.`;
+  const body = `
+    <div style="text-align:center">
+      <div style="font-family:var(--font-head);font-weight:800;font-size:clamp(3rem,10vw,5rem);color:var(--accent-soft);letter-spacing:-.02em">$${esc(rec.symbol)}</div>
+      <h1 style="margin-top:4px">${esc(rec.name)}</h1>
+      <p class="sub" style="color:var(--text-dim)">
+        A real token contract on Koinos — supply <strong>${esc(rec.supply)}</strong>${rec.mintable ? ' (mintable)' : ' (fixed forever)'} —
+        launched by <code>${esc(UIshort(rec.owner))}</code> in one click, with
+        <strong>no wallet setup, no gas fees, no signup</strong>.
+        ${rec.demo ? '<br><em>(demo — this instance is not chain-connected yet)</em>' : ''}
+      </p>
+      ${rec.dex ? `<p><span class="badge-ouro">📈 live on Trade Koinos with a KOIN pair</span></p>` : ''}
+      <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:26px">
+        <a class="btn big" href="/token">Launch yours — it&#39;s free</a>
+        ${rec.dex ? `<a class="btn big ghost" href="https://app.tradekoinos.com/" target="_blank" rel="noopener">Trade it ↗</a>` : `<a class="btn big ghost" href="/">How is this free?</a>`}
+      </div>
+      ${!rec.demo && explorerAddr(rec.address) ? `<p class="hint" style="margin-top:18px"><a href="${esc(explorerAddr(rec.address))}" target="_blank" rel="noopener">the contract, on-chain ↗</a></p>` : ''}
+    </div>`;
+  sendShareHtml(res, sharePageShell({ origin, path: '/t/' + rec.address, title, desc, ogImage: `${origin}/assets/og-card.png`, bodyHtml: body }));
+}
+
+const UIshort = (a) => (a ? String(a).slice(0, 6) + '…' + String(a).slice(-4) : '');
+
+/* Raster social card for a painted NFT — rendered once, cached. */
+const OG_CACHE = new Map();
+function serveNftOg(req, res, code) {
+  const rec = registry.nfts.find(n => n.code === code);
+  if (!rec) { res.writeHead(404); return res.end(); }
+  if (!rec.art) {
+    // uploaded NFT: the stored raster IS the card
+    const loc = /^https?:\/\//.test(rec.image) ? rec.image : originFor(req) + '/assets/og-card.png';
+    res.writeHead(302, { Location: loc });
+    return res.end();
+  }
+  let png = OG_CACHE.get(code);
+  if (!png) {
+    try { png = nftCardPng(rec.art.palette, rec.art.cells); }
+    catch (_) { res.writeHead(500); return res.end(); }
+    if (OG_CACHE.size > 500) OG_CACHE.clear();
+    OG_CACHE.set(code, png);
+  }
+  res.writeHead(200, {
+    'Content-Type': 'image/png', 'Content-Length': png.length,
+    'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(png);
+}
+
 /* ---------------- HTTP plumbing ---------------- */
 
 function httpError(status, message) {
@@ -886,16 +1074,27 @@ function serveStatic(req, res, pathname) {
     }
     const ext = path.extname(file).toLowerCase();
     const isHtml = ext === '.html';
-    res.writeHead(200, {
+    const headers = {
       'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Content-Length': st.size,
       'Cache-Control': isHtml ? 'no-cache' : 'public, max-age=86400',
       ...(isHtml ? {
         'Content-Security-Policy': CSP,
         'X-Content-Type-Options': 'nosniff',
         'Referrer-Policy': 'no-referrer',
       } : {}),
-    });
+    };
+    if (isHtml) {
+      /* Static pages carry OG tags whose URLs must be ABSOLUTE — inject the
+         request origin into the %%ORIGIN%% placeholders at serve time. */
+      fs.readFile(file, 'utf8', (rerr, text) => {
+        if (rerr) { res.writeHead(500); return res.end(); }
+        const body = Buffer.from(text.replace(/%%ORIGIN%%/g, originFor(req)));
+        res.writeHead(200, { ...headers, 'Content-Length': body.length });
+        res.end(body);
+      });
+      return;
+    }
+    res.writeHead(200, { ...headers, 'Content-Length': st.size });
     fs.createReadStream(file).pipe(res);
   });
 }
@@ -976,6 +1175,14 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname.startsWith('/uploads/')) return serveUpload(req, res, pathname);
 
+    // Public share pages + their raster social cards.
+    let m;
+    if ((m = /^\/n\/([A-Z0-9-]{1,40})$/.exec(pathname))) return sharePageNft(req, res, m[1]);
+    /* Loose shape on purpose: demo-mode addresses aren't strict base58,
+       and the registry lookup inside is the real gate. */
+    if ((m = /^\/t\/([A-Za-z0-9]{20,40})$/.exec(pathname))) return sharePageToken(req, res, m[1]);
+    if ((m = /^\/og\/nft\/([A-Z0-9-]{1,40})\.png$/.exec(pathname))) return serveNftOg(req, res, m[1]);
+
     if (pathname.startsWith('/api/')) {
       res.setHeader('Content-Type', 'application/json');
       let out;
@@ -983,8 +1190,9 @@ const server = http.createServer(async (req, res) => {
         out = await GET_ROUTES[pathname](url.searchParams);
       } else if (req.method === 'POST' && POST_ROUTES[pathname]) {
         if (rateLimited('api:ip:' + clientIp(req), 240, 60000)) throw httpError(429, 'slow down');
-        // The upload route carries a base64 image; everyone else is tiny.
-        const cap = pathname === '/api/upload-nft' ? CFG.maxUploadBytes * 2 + 65536 : 128 * 1024;
+        // The upload route carries base64 images (up to 10 per batch);
+        // everyone else is tiny. 16MB bounds the JSON parse.
+        const cap = pathname === '/api/upload-nft' ? 16 * 1024 * 1024 : 128 * 1024;
         const body = await readBody(req, cap);
         out = await POST_ROUTES[pathname](body, clientIp(req), req);
       } else {
