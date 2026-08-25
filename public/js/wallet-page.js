@@ -51,7 +51,11 @@
     }
   }
 
-  $('#w-create').addEventListener('click', () => { try { UI.ensureAccount(); } catch (_) { return; } paint(); });
+  $('#w-create').addEventListener('click', () => { if (Wallet.address()) return; UI.openLogin(); });
+  document.addEventListener('dk:account', paint);
+  // Revealing / copying / downloading the key counts as a backup, so logout
+  // won't over-warn about losing a Local Wallet.
+  const markBackedUp = () => { try { sessionStorage.setItem('dk_backed_up', '1'); } catch (_) {} };
   $('#w-copy').addEventListener('click', () => {
     const a = Wallet.address();
     if (!a) return toast('Create an account first', 'err');
@@ -63,14 +67,14 @@
     const wif = Wallet.exportWif();
     if (!wif) return toast('Create an account first', 'err');
     const box = $('#w-wif');
-    const showing = box.classList.toggle('revealed');
+    const showing = box.classList.toggle('revealed'); if (showing) markBackedUp();
     box.textContent = showing ? wif : '····································';
     $('#w-reveal').textContent = showing ? 'Hide key' : 'Reveal key';
   });
   $('#w-copy-wif').addEventListener('click', () => {
     const wif = Wallet.exportWif();
     if (!wif) return toast('Create an account first', 'err');
-    copy(wif, 'Private key copied — paste it somewhere SAFE');
+    markBackedUp(); copy(wif, 'Private key copied — paste it somewhere SAFE');
   });
   $('#w-download').addEventListener('click', () => {
     const wif = Wallet.exportWif();
@@ -90,7 +94,7 @@
     /* revoke AFTER the browser has had a tick to start the download —
        Safari/older Firefox abort a synchronous revoke. */
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-    toast('Backup downloaded', 'ok');
+    markBackedUp(); toast('Backup downloaded', 'ok');
   });
 
   /* import */

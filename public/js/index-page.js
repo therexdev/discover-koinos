@@ -39,15 +39,18 @@
     }
   }
   $('#btn-create-wallet').addEventListener('click', () => {
-    UI.ensureAccount();
-    paintWallet();
+    if (Wallet.address()) return;
+    UI.openLogin();
   });
+  document.addEventListener('dk:account', paintWallet);
   if (Wallet.exists()) paintWallet();
 
   $('#cta-start').addEventListener('click', () => {
-    UI.ensureAccount();
-    paintWallet();
-    document.getElementById('actions').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (Wallet.address()) {
+      document.getElementById('actions').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      UI.openLogin();
+    }
   });
 
   /* ---- NFT card ---- */

@@ -33,8 +33,12 @@ const Api = (() => {
     stats: () => call('/api/stats'),
     account: (address) => call('/api/account?address=' + encodeURIComponent(address)),
     gallery: () => call('/api/gallery'),
+    collections: (address) => call('/api/collections?address=' + encodeURIComponent(address)),
     mintNft: (body) => call('/api/mint-nft', { body }),
+    uploadNft: (body) => call('/api/upload-nft', { body }),
     launchToken: (body) => call('/api/launch-token', { body }),
+    listDex: (body) => call('/api/list-dex', { body }),
+    auth: (body) => call('/api/auth', { body }),
     prepare: (body) => call('/api/prepare', { body }),
     submit: (body) => call('/api/submit', { body }),
   };

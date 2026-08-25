@@ -49,15 +49,56 @@ const CFG = {
      these keep one hot day from draining it entirely. */
   maxLaunchesPerDay: parseInt(process.env.MAX_LAUNCHES_PER_DAY || '10', 10),
   maxMintsPerDay: parseInt(process.env.MAX_MINTS_PER_DAY || '200', 10),
+  maxCollectionsPerDay: parseInt(process.env.MAX_COLLECTIONS_PER_DAY || '10', 10),
   demo: process.env.DEMO_MODE === '1',
+
+  /* Social login (custodial). Needs LOGIN_SECRET to custody keys, plus the
+     provider credentials. Without LOGIN_SECRET the social buttons stay off
+     and only Local Wallet / Import are offered. */
+  loginSecret: process.env.LOGIN_SECRET || '',
+  googleClientId: process.env.GOOGLE_CLIENT_ID || '',
+  xClientId: process.env.X_CLIENT_ID || '',
+  xClientSecret: process.env.X_CLIENT_SECRET || '',
+  xRedirectUri: process.env.X_REDIRECT_URI || '',
+  publicOrigin: process.env.PUBLIC_ORIGIN || '',
+
+  /* OURO marketplace auto-registration (discoverability). Server-to-server;
+     no key needed to register, admin key only lifts the rate limit. */
+  ouroApiBase: (process.env.OURO_API_BASE || 'https://ouro.lifestyle').replace(/\/+$/, ''),
+  ouroAdminKey: process.env.OURO_ADMIN_KEY || '',
+  autoListOuro: process.env.AUTO_LIST_OURO !== '0',
+
+  /* Trade Koinos orderbook DEX — mainnet only; no testnet deployment. */
+  dexOrderbook: process.env.DEX_ORDERBOOK_ADDR ||
+    ((process.env.KOINOS_NETWORK || 'harbinger') === 'mainnet' ? '1Bke72aGbpq4brDY3m1UQxRCGBB9GPTJQz' : ''),
+
+  /* Uploaded NFT images (the "Upload" path). Stored on the gateway, served
+     by URL, referenced from on-chain metadata. */
+  maxUploadBytes: parseInt(process.env.MAX_UPLOAD_BYTES || String(3 * 1024 * 1024), 10),
 };
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const DATA_DIR = path.join(__dirname, 'data');
+const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const TOKEN_WASM = path.join(__dirname, 'contracts', 'prebuilt', 'token', 'contract.wasm');
+const COLLECTION_WASM = path.join(__dirname, 'contracts', 'prebuilt', 'collection', 'contract.wasm');
+
+const { createAuth } = require('./tools/auth');
+const xRedirectUri = CFG.xRedirectUri || (CFG.publicOrigin ? CFG.publicOrigin.replace(/\/+$/, '') + '/auth/x/callback' : '');
+const auth = createAuth({
+  dataDir: DATA_DIR,
+  loginSecret: CFG.loginSecret || require('node:crypto').randomBytes(32).toString('hex'),
+  // A provider is only enabled when LOGIN_SECRET is set (so custodied keys
+  // survive restarts) AND its own credentials are present.
+  googleClientId: CFG.loginSecret ? CFG.googleClientId : '',
+  xClientId: CFG.loginSecret ? CFG.xClientId : '',
+  xClientSecret: CFG.loginSecret ? CFG.xClientSecret : '',
+  xRedirectUri: CFG.loginSecret ? xRedirectUri : '',
+});
 
 let DEMO = CFG.demo;          // may flip on at boot if the chain is unreachable
 let BOOT_NOTE = '';
+const PAINT_NAME = 'Discover Koinos Paint';   // the one shared Paint collection
 
 /* ---------------- tiny persistence ----------------
    JSON files in data/, written atomically. The chain is the source of
@@ -77,16 +118,49 @@ function saveJson(file, value, { secret = false } = {}) {
 
 const registry = {
   tokens: loadJson('tokens.json', []),      // public: launched tokens
-  nfts: loadJson('nfts.json', []),          // public: minted playground NFTs
+  nfts: loadJson('nfts.json', []),          // public: minted NFTs (all collections)
+  collections: loadJson('collections.json', []), // public: collections (paint + per-user)
   counters: loadJson('counters.json', {}),  // per-day action counts
 };
-/* Token account keys — the upgrade authority for every launched token.
-   Owner-only file permissions, never logged, never sent to a browser. */
+/* Contract account keys — the upgrade authority + free-mint authority for
+   every launched token and collection. Owner-only file permissions, never
+   logged, never sent to a browser. */
 const tokenKeys = loadJson('token-keys.json', {});
+const collectionKeys = loadJson('collection-keys.json', {});
 const saveTokens = () => saveJson('tokens.json', registry.tokens);
 const saveNfts = () => saveJson('nfts.json', registry.nfts);
+const saveCollections = () => saveJson('collections.json', registry.collections);
 const saveCounters = () => saveJson('counters.json', registry.counters);
 const saveTokenKeys = () => saveJson('token-keys.json', tokenKeys, { secret: true });
+const saveCollectionKeys = () => saveJson('collection-keys.json', collectionKeys, { secret: true });
+
+/* ---------------- OURO marketplace registration ----------------
+   Discoverability only: a free, unauthenticated POST that adds a KCS-2
+   collection to OURO's browse index. Best-effort — a failure never blocks a
+   mint; we just record that the collection isn't listed yet and can retry.
+   (Server-to-server: OURO's API sets no CORS header, so a browser couldn't
+   do this.) Only meaningful on the network OURO runs on (mainnet). */
+async function registerOnOuro(rec) {
+  if (!CFG.autoListOuro || DEMO) return false;
+  if (!NETWORKS[CFG.network] || NETWORKS[CFG.network].testnet) return false; // OURO is mainnet
+  try {
+    const body = {
+      address: rec.address, name: rec.name,
+      description: rec.description || `Created at Discover Koinos`,
+      image: rec.image || undefined, by: rec.owner || undefined,
+    };
+    if (CFG.ouroAdminKey) body.key = CFG.ouroAdminKey;
+    const r = await fetch(CFG.ouroApiBase + '/api/collections', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: AbortSignal.timeout(12000),
+    });
+    // "already registered" is success from our side.
+    if (r.ok) return true;
+    const d = await r.json().catch(() => ({}));
+    return /already registered/i.test(String(d.error || ''));
+  } catch (_) { return false; }
+}
+const ouroCollectionUrl = (addr) => `${CFG.ouroApiBase}/#/c/${addr}`;
 
 function dayKey() { return new Date().toISOString().slice(0, 10); }
 function rollDay() {
@@ -145,7 +219,49 @@ async function reserveMana(cost, floor, onLow) {
 }
 /* Rough mana costs (KOIN) for reservation math; the real charge is metered
    on-chain — these only bound how many actions run at once. */
-const COST_MINT = 2, COST_LAUNCH = 50, COST_ACTION = 2;
+const COST_MINT = 2, COST_LAUNCH = 50, COST_COLLECTION = 55, COST_ACTION = 2;
+
+/* ---------------- uploaded image handling ----------------
+   Accept only raster images (never SVG — an inline-script SVG served
+   same-origin is stored XSS). Sniff the real bytes, cap the size, store
+   under data/uploads, and reference by URL from the NFT metadata. */
+const IMG_TYPES = {
+  '\x89PNG\r\n\x1a\n': { ext: 'png', mime: 'image/png' },
+  '\xff\xd8\xff': { ext: 'jpg', mime: 'image/jpeg' },
+  'GIF87a': { ext: 'gif', mime: 'image/gif' },
+  'GIF89a': { ext: 'gif', mime: 'image/gif' },
+};
+function sniffImage(buf) {
+  const head = buf.slice(0, 16).toString('binary');
+  for (const [magic, t] of Object.entries(IMG_TYPES)) if (head.startsWith(magic)) return t;
+  // WEBP: "RIFF"...."WEBP"
+  if (head.startsWith('RIFF') && head.slice(8, 12) === 'WEBP') return { ext: 'webp', mime: 'image/webp' };
+  return null;
+}
+/** Parse a data: URL image, validate type + size, return { buf, ext, mime }. */
+function decodeUploadImage(dataUrl) {
+  const m = /^data:([\w/+.-]+);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
+  if (!m) throw httpError(400, 'send the image as a base64 data URL');
+  const buf = Buffer.from(m[2], 'base64');
+  if (!buf.length) throw httpError(400, 'that image is empty');
+  if (buf.length > CFG.maxUploadBytes) throw httpError(413, `image too large — max ${Math.round(CFG.maxUploadBytes / 1048576)}MB`);
+  const t = sniffImage(buf);
+  if (!t) throw httpError(400, 'unsupported image — use PNG, JPEG, GIF or WebP (not SVG)');
+  return { buf, ext: t.ext, mime: t.mime };
+}
+function storeUpload(buf, ext) {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  const id = crypto.randomBytes(16).toString('hex') + '.' + ext;
+  fs.writeFileSync(path.join(UPLOAD_DIR, id), buf);
+  return id;
+}
+function originFor(req) {
+  if (CFG.publicOrigin) return CFG.publicOrigin.replace(/\/+$/, '');
+  const proto = (req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
+  const host = req.headers['host'] || `localhost:${CFG.port}`;
+  return `${proto}://${host}`;
+}
+const symbolFrom = (name) => (String(name).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) || 'DK') ;
 
 /* ---------------- rate limiting ---------------- */
 
@@ -269,10 +385,27 @@ api.config = async () => {
     note: BOOT_NOTE || undefined,
     sponsor: DEMO ? null : chain.devAddress(),
     collection: CFG.collectionAddr || null,
+    paintCollectionName: PAINT_NAME,
     faucets: net.faucets,
+    auth: {
+      google: auth.googleEnabled(),
+      x: auth.xEnabled(),
+      googleClientId: auth.googleEnabled() ? CFG.googleClientId : null,
+    },
+    dex: {
+      enabled: DEMO ? true : chain.dexEnabled(),
+      name: 'Trade Koinos',
+      mainnetOnly: true,
+      available: DEMO || (chain.dexEnabled() && !net.testnet),
+    },
+    ouro: {
+      autoList: CFG.autoListOuro && (DEMO || !net.testnet),
+      base: CFG.ouroApiBase,
+    },
     limits: {
       launchesPerDay: CFG.maxLaunchesPerDay,
       mintsPerDay: CFG.maxMintsPerDay,
+      collectionsPerDay: CFG.maxCollectionsPerDay,
     },
   };
 };
@@ -303,12 +436,21 @@ api.stats = async () => {
   return value;
 };
 
+/** Collections this address can mint into: the shared Paint collection
+    plus any the address created via Upload. */
+function myCollections(address) {
+  return registry.collections
+    .filter(c => c.kind === 'paint' || c.owner === address)
+    .map(c => ({ address: c.address, name: c.name, symbol: c.symbol, kind: c.kind, ouro: !!c.ouro, ouroUrl: c.ouro ? ouroCollectionUrl(c.address) : null }));
+}
+
 api.account = async (params) => {
   const address = params.get('address');
   if (!chain.isAddr(address)) throw httpError(400, 'a valid Koinos address is required');
   const mine = {
     nfts: registry.nfts.filter(n => n.owner === address),
     tokens: registry.tokens.filter(t => t.owner === address),
+    collections: myCollections(address).filter(c => c.kind !== 'paint'),
   };
   if (DEMO) {
     return { ok: true, demo: true, koin: 0, mana: 5, ...mine };
@@ -324,14 +466,42 @@ api.account = async (params) => {
     try { balance = await chain.tokenBalanceAt(t.address, address); } catch (_) {}
     tokens.push({ ...t, balance });
   }
-  return { ok: true, koin, mana, nfts: mine.nfts, tokens };
+  return { ok: true, koin, mana, nfts: mine.nfts, tokens, collections: mine.collections };
+};
+
+/** GET /api/collections?address= — the collections this address can mint
+    into (Paint + own). Drives the Upload page's collection picker. */
+api.collections = async (params) => {
+  const address = params.get('address');
+  if (!chain.isAddr(address)) throw httpError(400, 'a valid Koinos address is required');
+  return { ok: true, collections: myCollections(address) };
 };
 
 api.gallery = async () => ({
   ok: true,
   nfts: registry.nfts.slice(-24).reverse(),
   tokens: registry.tokens.slice(-24).reverse(),
+  collections: registry.collections.slice(-24).reverse().map(c => ({
+    address: c.address, name: c.name, symbol: c.symbol, kind: c.kind,
+    ouroUrl: c.ouro ? ouroCollectionUrl(c.address) : null,
+  })),
 });
+
+/* ---------------- auth (custodial social login) ---------------- */
+
+api.auth = async (body, ip) => {
+  const action = String(body.action || '');
+  if (rateLimited('auth:ip:' + ip, 30, 3600000)) throw httpError(429, 'too many sign-in attempts — wait a few minutes');
+  if (action === 'google') {
+    const r = await auth.google(body.idToken);
+    return { ok: true, wif: r.wif, address: r.address, created: r.created, label: r.label };
+  }
+  if (action === 'x-claim') {
+    const r = auth.xClaimWif(body.claim);
+    return { ok: true, wif: r.wif, address: r.address, label: r.label };
+  }
+  throw httpError(400, 'unknown action');
+};
 
 api.mintNft = async (body, ip) => {
   const err = verifyProof(body, 'mint-nft');
@@ -368,7 +538,7 @@ api.mintNft = async (body, ip) => {
       finally { releaseMana(); }
     }
   } catch (e) { releaseDaily(); throw e; }
-  const rec = { code, tokenId, name, image, owner: address, txid, ts: Date.now(), demo: DEMO || undefined };
+  const rec = { code, tokenId, name, image, collection: CFG.collectionAddr || null, collectionName: PAINT_NAME, owner: address, txid, ts: Date.now(), demo: DEMO || undefined };
   registry.nfts.push(rec); saveNfts();
   return { ok: true, ...rec, explorer: DEMO ? null : explorerTx(txid) };
 };
@@ -434,6 +604,147 @@ api.launchToken = async (body, ip) => {
     explorer: DEMO ? null : explorerAddr(address2),
     explorerTx: DEMO ? null : explorerTx(rec.txid),
   };
+};
+
+/* ---------------- NFT: upload → own collection ----------------
+   The Upload path: an image + a collection (new or one the address already
+   made) + an NFT name. A new collection deploys a fresh KCS-2 contract
+   (owner = the visitor), is remembered so they can mint into it again, and
+   is auto-registered on OURO. The image is stored on the gateway and
+   referenced by URL from the on-chain metadata. */
+api.uploadNft = async (body, ip, req) => {
+  const err = verifyProof(body, 'upload-nft');
+  if (err) throw httpError(400, err);
+  const address = body.address;
+  const nftName = cleanText(body.name, 48);
+  if (!nftName) throw httpError(400, 'give your NFT a name');
+  if (rateLimited('upload:addr:' + address, 8, 24 * 3600000)) throw httpError(429, 'that account has uploaded a lot today — come back tomorrow');
+  if (rateLimited('upload:ip:' + ip, 15, 24 * 3600000)) throw httpError(429, 'too many uploads from this connection today');
+
+  const { buf, ext, mime } = decodeUploadImage(body.image);
+
+  // Resolve the target collection.
+  let coll = null;
+  const wantAddr = String(body.collection || '').trim();
+  if (wantAddr) {
+    coll = registry.collections.find(c => c.address === wantAddr && (c.kind === 'paint' || c.owner === address));
+    if (!coll) throw httpError(404, 'that collection is not one you can mint into');
+    if (coll.kind === 'paint') throw httpError(400, 'the Paint collection is for painted NFTs — pick or create your own collection for uploads');
+  }
+
+  // Reserve the daily mint slot up front (id + budget), before any await.
+  const releaseMintDaily = reserveDaily('mints', CFG.maxMintsPerDay);
+  if (!releaseMintDaily) throw httpError(503, 'the playground hit today’s mint budget — come back tomorrow');
+  const seq = nextSeq();
+
+  let createdCollection = null, releaseColDaily = null;
+  try {
+    // Create a new collection if none chosen.
+    if (!coll) {
+      const collName = cleanText(body.collectionName, 64);
+      if (!collName) throw httpError(400, 'name your new collection (or pick an existing one)');
+      releaseColDaily = reserveDaily('collections', CFG.maxCollectionsPerDay);
+      if (!releaseColDaily) throw httpError(503, 'the gateway hit today’s collection budget — come back tomorrow');
+      const symbol = symbolFrom(collName);
+      if (DEMO) {
+        coll = { address: demoAddr(), name: collName, symbol, owner: address, kind: 'user', createdAt: Date.now(), demo: true };
+      } else {
+        if (!chain.enabled()) throw httpError(503, 'the sponsor wallet is not configured yet');
+        const releaseMana = await reserveMana(COST_COLLECTION, CFG.minManaLaunch,
+          (live) => httpError(503, `the sponsor wallet is recharging its mana (${Math.floor(live)} of ${CFG.minManaLaunch} needed) — deploying a collection stores real bytecode on-chain. Try again later`));
+        try {
+          const acct = chain.newAccount();
+          collectionKeys[acct.address] = acct.wif; saveCollectionKeys();
+          const wasm = fs.readFileSync(COLLECTION_WASM);
+          const launched = await chain.launchCollection({ name: collName, symbol, owner: address, description: `A collection created at Discover Koinos by ${address}` }, wasm, acct.key);
+          coll = { address: launched.address, name: collName, symbol, owner: address, kind: 'user', createdAt: Date.now(), ouro: false };
+        } finally { releaseMana(); }
+      }
+      registry.collections.push(coll); saveCollections();
+      createdCollection = coll;
+      releaseColDaily = null;   // the collection deployed; don't refund its slot if the mint then fails
+      // Auto-register on OURO (best-effort; never blocks the mint).
+      registerOnOuro({ address: coll.address, name: coll.name, owner: address }).then((ok) => {
+        if (ok) { coll.ouro = true; saveCollections(); }
+      }).catch(() => {});
+    }
+
+    // Store the image and mint into the collection.
+    const fileId = storeUpload(buf, ext);
+    const imageUrl = originFor(req) + '/uploads/' + fileId;
+    const code = coll.symbol + '-' + seq;
+    const tokenId = chain.codeToTokenId(code);
+    const metadata = JSON.stringify({ name: nftName, image: imageUrl, description: `Minted at Discover Koinos by ${address}` });
+
+    let txid;
+    if (DEMO || coll.demo) { txid = demoTxid(); }
+    else {
+      const releaseMana = await reserveMana(COST_MINT, CFG.minManaMint,
+        () => httpError(503, 'the sponsor wallet is recharging its mana — try again in a few minutes'));
+      try { txid = await chain.mintToCollection(collectionKeys[coll.address], address, tokenId, metadata); }
+      finally { releaseMana(); }
+    }
+    const rec = {
+      code, tokenId, name: nftName, image: imageUrl, mime,
+      collection: coll.address, collectionName: coll.name,
+      owner: address, txid, ts: Date.now(), demo: (DEMO || coll.demo) || undefined,
+    };
+    registry.nfts.push(rec); saveNfts();
+    return {
+      ok: true, ...rec,
+      explorer: (DEMO || coll.demo) ? null : explorerTx(txid),
+      collectionOuroUrl: coll.ouro ? ouroCollectionUrl(coll.address) : null,
+      createdCollection: createdCollection ? { address: coll.address, name: coll.name, symbol: coll.symbol } : null,
+    };
+  } catch (e) {
+    releaseMintDaily(); if (releaseColDaily) releaseColDaily();
+    throw e;
+  }
+};
+
+/* ---------------- token: list on Trade Koinos DEX ----------------
+   Free (mana only): ensure the TOKEN/KOIN market exists (server creates it,
+   permissionless), then hand back a SELL order for the visitor to sign that
+   escrows only their own token. Mainnet only. Uses the prepare/submit
+   round-trip — the returned ref is redeemed via /api/submit. */
+api.listDex = async (body, ip) => {
+  const err = verifyProof(body, 'list-dex');
+  if (err) throw httpError(400, err);
+  const address = body.address;
+  const rec = registry.tokens.find(t => t.address === String(body.token || ''));
+  if (!rec) throw httpError(404, 'unknown gateway token');
+  if (rec.owner !== address) throw httpError(403, 'only the token owner can list it');
+  if (rateLimited('dex:addr:' + address, 5, 3600000) || rateLimited('dex:ip:' + ip, 10, 3600000)) {
+    throw httpError(429, 'too many listings — slow down a moment');
+  }
+
+  let quantityUnits, priceUnits;
+  try { quantityUnits = chain.toUnits(String(body.amount || '0'), rec.decimals); }
+  catch (e) { throw httpError(400, `bad amount: ${e.message}`); }
+  try { priceUnits = chain.toDexPrice(String(body.price || '0'), rec.decimals); }
+  catch (e) { throw httpError(400, e.message); }
+  // The order must be worth at least one KOIN-satoshi.
+  if ((BigInt(quantityUnits) * BigInt(priceUnits)) / 100000000n <= 0n) {
+    throw httpError(400, 'that amount × price rounds to zero KOIN — raise one of them');
+  }
+
+  if (DEMO) {
+    const ref = rememberPrepared('demo', address);
+    return { ok: true, demo: true, ref, tx: { id: 'demo' }, dex: 'Trade Koinos' };
+  }
+  if (!chain.dexEnabled() || NETWORKS[CFG.network].testnet) {
+    throw httpError(400, 'Trade Koinos is only deployed on mainnet — token DEX listing is available once you go live on mainnet');
+  }
+  const releaseMana = await reserveMana(COST_ACTION, CFG.minManaAction,
+    () => httpError(503, 'the sponsor wallet is recharging its mana — try again in a few minutes'));
+  let marketId;
+  try { marketId = await chain.ensureDexMarket(rec.address); }
+  finally { releaseMana(); }
+
+  const ops = await chain.opsDexSell(rec.address, address, marketId, priceUnits, quantityUnits);
+  const tx = await chain.prepareUserTx(address, ops);
+  const ref = rememberPrepared(tx.id, address);
+  return { ok: true, ref, tx, marketId, dex: 'Trade Koinos', explorerAddr: explorerAddr(chain.K.dexOrderbook) };
 };
 
 /* Prepared user transactions: the visitor's OWN assets moving, so the
@@ -544,16 +855,23 @@ const PAGES = {
   '/build': 'build.html',
 };
 
-const CSP = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src https://fonts.gstatic.com",
-  "img-src 'self' data:",
-  "connect-src 'self'",
-  "frame-ancestors 'none'",
-  "base-uri 'none'",
-].join('; ');
+/* CSP stays strict; it only widens to Google's sign-in origins when Google
+   login is actually configured (its script + button iframe + token calls). */
+function buildCsp() {
+  const g = auth.googleEnabled() ? ' https://accounts.google.com' : '';
+  return [
+    "default-src 'self'",
+    "script-src 'self'" + g,
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" + g,
+    "font-src https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self'" + g,
+    "frame-src" + (g || " 'none'"),
+    "frame-ancestors 'none'",
+    "base-uri 'none'",
+  ].join('; ');
+}
+const CSP = buildCsp();
 
 function serveStatic(req, res, pathname) {
   const rel = PAGES[pathname] || pathname.replace(/^\/+/, '');
@@ -598,16 +916,39 @@ function readBody(req, maxBytes = 128 * 1024) {
   });
 }
 
+/** Serve an uploaded NFT image from data/uploads with a locked-down
+    content type (never as HTML/SVG) so a stored file can't run as script. */
+function serveUpload(req, res, pathname) {
+  const name = pathname.slice('/uploads/'.length);
+  if (!/^[0-9a-f]{32}\.(png|jpg|gif|webp)$/.test(name)) { res.writeHead(404); return res.end('not found'); }
+  const file = path.join(UPLOAD_DIR, name);
+  fs.stat(file, (err, st) => {
+    if (err || !st.isFile()) { res.writeHead(404); return res.end('not found'); }
+    const ext = path.extname(file).slice(1);
+    const mime = ext === 'jpg' ? 'image/jpeg' : 'image/' + ext;
+    res.writeHead(200, {
+      'Content-Type': mime, 'Content-Length': st.size,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline',
+    });
+    fs.createReadStream(file).pipe(res);
+  });
+}
+
 const GET_ROUTES = {
   '/api/config': api.config,
   '/api/stats': api.stats,
   '/api/account': api.account,
+  '/api/collections': api.collections,
   '/api/gallery': api.gallery,
   '/api/health': api.health,
 };
 const POST_ROUTES = {
   '/api/mint-nft': api.mintNft,
   '/api/launch-token': api.launchToken,
+  '/api/upload-nft': api.uploadNft,
+  '/api/list-dex': api.listDex,
+  '/api/auth': api.auth,
   '/api/prepare': api.prepare,
   '/api/submit': api.submit,
 };
@@ -616,6 +957,25 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
   try {
+    // X (Twitter) OAuth redirect endpoints — full-page redirects, not JSON.
+    if (pathname === '/auth/x/login') {
+      if (rateLimited('xlogin:ip:' + clientIp(req), 20, 3600000)) { res.writeHead(429, { 'Content-Type': 'text/plain' }); return res.end('slow down'); }
+      try { res.writeHead(302, { Location: auth.xLoginUrl() }); return res.end(); }
+      catch (e) { res.writeHead(e.status || 500, { 'Content-Type': 'text/plain' }); return res.end(String(e.message || e)); }
+    }
+    if (pathname === '/auth/x/callback') {
+      if (rateLimited('xcb:ip:' + clientIp(req), 30, 3600000)) { res.writeHead(429, { 'Content-Type': 'text/plain' }); return res.end('slow down'); }
+      try {
+        const { claim } = await auth.xCallback(url.searchParams.get('code'), url.searchParams.get('state'));
+        res.writeHead(302, { Location: '/wallet?auth=x&claim=' + encodeURIComponent(claim) });
+        return res.end();
+      } catch (e) {
+        res.writeHead(302, { Location: '/wallet?auth=x_error&msg=' + encodeURIComponent(String(e.message || e).slice(0, 120)) });
+        return res.end();
+      }
+    }
+    if (pathname.startsWith('/uploads/')) return serveUpload(req, res, pathname);
+
     if (pathname.startsWith('/api/')) {
       res.setHeader('Content-Type', 'application/json');
       let out;
@@ -623,8 +983,10 @@ const server = http.createServer(async (req, res) => {
         out = await GET_ROUTES[pathname](url.searchParams);
       } else if (req.method === 'POST' && POST_ROUTES[pathname]) {
         if (rateLimited('api:ip:' + clientIp(req), 240, 60000)) throw httpError(429, 'slow down');
-        const body = await readBody(req);
-        out = await POST_ROUTES[pathname](body, clientIp(req));
+        // The upload route carries a base64 image; everyone else is tiny.
+        const cap = pathname === '/api/upload-nft' ? CFG.maxUploadBytes * 2 + 65536 : 128 * 1024;
+        const body = await readBody(req, cap);
+        out = await POST_ROUTES[pathname](body, clientIp(req), req);
       } else {
         throw httpError(404, 'no such endpoint');
       }
@@ -664,6 +1026,7 @@ const server = http.createServer(async (req, res) => {
         network: CFG.network, rpcs: [rpcUrl],
         devWif: CFG.devWif,
         collectionAddr: CFG.collectionAddr, collectionWif: CFG.collectionWif,
+        dexOrderbook: CFG.dexOrderbook,
       });
       const [sponsorMana, sponsorKoin] = await Promise.all([
         chain.mana(chain.devAddress()), chain.koinBalance(chain.devAddress()),
@@ -672,16 +1035,17 @@ const server = http.createServer(async (req, res) => {
       if (CFG.collectionAddr) {
         try {
           const info = await chain.collectionInfo();
-          console.log(`nfts:     ${CFG.collectionAddr} "${info.name || '?'}" (${info.symbol || '?'})`);
+          console.log(`paint:    ${CFG.collectionAddr} "${info.name || '?'}" (${info.symbol || '?'})`);
+          registerPaintCollection(info);
         } catch (e) {
-          console.log(`nfts:     WARNING — collection at ${CFG.collectionAddr} did not answer get_info: ${e.message}`);
+          console.log(`paint:    WARNING — collection at ${CFG.collectionAddr} did not answer get_info: ${e.message}`);
         }
       } else {
-        console.log('nfts:     no collection configured — run scripts/deploy-playground.js');
+        console.log('paint:    no Paint collection configured — run scripts/deploy-playground.js');
       }
-      if (!fs.existsSync(TOKEN_WASM)) {
-        console.log('tokens:   WARNING — contracts/prebuilt/token/contract.wasm missing; token launches will fail');
-      }
+      console.log(`dex:      ${chain.dexEnabled() ? 'Trade Koinos ' + CFG.dexOrderbook : 'off (mainnet only)'}`);
+      if (!fs.existsSync(TOKEN_WASM)) console.log('tokens:   WARNING — contracts/prebuilt/token/contract.wasm missing; token launches will fail');
+      if (!fs.existsSync(COLLECTION_WASM)) console.log('upload:   WARNING — contracts/prebuilt/collection/contract.wasm missing; Upload collections will fail');
     } catch (e) {
       DEMO = true;
       BOOT_NOTE = 'chain unreachable at boot';
@@ -690,7 +1054,25 @@ const server = http.createServer(async (req, res) => {
   } else {
     console.log('mode:     DEMO (DEMO_MODE=1)');
   }
+  // Social login readiness.
+  if (auth.googleEnabled()) console.log('auth:     Google sign-in ENABLED');
+  else if (CFG.googleClientId && !CFG.loginSecret) console.log('auth:     Google client id set but LOGIN_SECRET is unset — Google sign-in stays OFF');
+  if (auth.xEnabled()) console.log('auth:     X (Twitter) sign-in ENABLED');
+  else if (CFG.xClientId && !CFG.loginSecret) console.log('auth:     X client id set but LOGIN_SECRET is unset — X sign-in stays OFF');
+  console.log('auth:     Local Wallet + Import always available');
+
   server.listen(CFG.port, () => {
     console.log(`serving:  http://localhost:${CFG.port} ${DEMO ? '(demo mode)' : ''}`);
   });
 })();
+
+/* Ensure the shared Paint collection is in the registry (kind:'paint') and,
+   on mainnet, discoverable on OURO. Idempotent. */
+function registerPaintCollection(info) {
+  let rec = registry.collections.find(c => c.address === CFG.collectionAddr);
+  if (!rec) {
+    rec = { address: CFG.collectionAddr, name: info.name || PAINT_NAME, symbol: info.symbol || 'PAINT', owner: null, kind: 'paint', createdAt: Date.now(), ouro: false };
+    registry.collections.push(rec); saveCollections();
+  }
+  if (!rec.ouro) registerOnOuro({ address: rec.address, name: rec.name }).then((ok) => { if (ok) { rec.ouro = true; saveCollections(); } }).catch(() => {});
+}

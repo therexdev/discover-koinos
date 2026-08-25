@@ -69,6 +69,38 @@ const Wallet = (() => {
     return account;
   }
 
+  /** Adopt a WIF the server released after a social login — from here on
+      the browser holds the key and signs locally, exactly like a Local
+      Wallet. Announces the account change. */
+  function adoptWif(wif) {
+    const addr = importAccount(wif);
+    document.dispatchEvent(new CustomEvent('dk:account'));
+    return addr;
+  }
+
+  /** Google sign-in: verify the GSI id-token server-side, receive the
+      custodied key, hold it locally. */
+  async function loginGoogle(idToken) {
+    const r = await Api.auth({ action: 'google', idToken });
+    return { address: adoptWif(r.wif), label: r.label, created: r.created };
+  }
+
+  /** X (Twitter) sign-in step 2: exchange the one-time claim for the key. */
+  async function claimX(claim) {
+    const r = await Api.auth({ action: 'x-claim', claim });
+    return { address: adoptWif(r.wif), label: r.label };
+  }
+
+  /** Log out: forget the key on this device. If it was a Local Wallet that
+      was never backed up, it is gone — callers should warn first. Social
+      accounts can always be recovered by signing in again. */
+  function logout() {
+    signer = null; account = null; memKey = null;
+    try { localStorage.removeItem(LS_KEY); } catch (_) {}
+    try { localStorage.removeItem('dk_progress'); } catch (_) {}
+    document.dispatchEvent(new CustomEvent('dk:account'));
+  }
+
   /** The WIF backup of this account — show it, never send it anywhere. */
   const exportWif = () => (loadKey() ? storeGet() : null);
 
@@ -105,7 +137,8 @@ const Wallet = (() => {
   }
 
   return {
-    hasLib, exists, address, createAccount, importAccount, exportWif,
+    hasLib, exists, address, createAccount, importAccount, adoptWif, exportWif,
+    loginGoogle, claimX, logout,
     proof, signTx, sponsoredAction, storageEphemeral,
   };
 })();

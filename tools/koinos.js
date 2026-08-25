@@ -46,9 +46,30 @@ function sanitizeAbi(abi) {
   if (koinos) { delete koinos.btype; delete koinos._btype; }
   return out;
 }
+/* Some ABIs (koinos-abi-proto-gen output, e.g. Trade Koinos' orderbook)
+   name their METHOD fields camelCase (entryPoint/input/output/readOnly) and
+   put the protobuf descriptor under `types` rather than `koilib_types`.
+   koilib wants snake_case method fields and reads `koilib_types`. Normalize
+   once at load, then sanitize the btype extension like any other ABI. */
+function normalizeGeneratedAbi(abi) {
+  const methods = {};
+  for (const [name, m] of Object.entries(abi.methods || {})) {
+    methods[name] = {
+      entry_point: m.entry_point ?? m.entryPoint ??
+        (m['entry-point'] != null ? parseInt(m['entry-point'], 16) : undefined),
+      argument: m.argument ?? m.input,
+      return: m.return ?? m.output,
+      read_only: m.read_only ?? m.readOnly ?? m['read-only'],
+      description: m.description,
+    };
+  }
+  return sanitizeAbi({ methods, koilib_types: abi.koilib_types || abi.types });
+}
+
 const ABI_DIR = path.join(__dirname, '..', 'server-abi');
 const COLLECTION_ABI = sanitizeAbi(JSON.parse(fs.readFileSync(path.join(ABI_DIR, 'collection-abi.json'))));
 const TOKEN_ABI = sanitizeAbi(JSON.parse(fs.readFileSync(path.join(ABI_DIR, 'token-abi.json'))));
+const ORDERBOOK_ABI = normalizeGeneratedAbi(JSON.parse(fs.readFileSync(path.join(ABI_DIR, 'orderbook-abi.json'))));
 /* NOT koilib's utils.tokenAbi: that one names its methods in camelCase
    (balanceOf), while this facade — and the KCS standard — speak snake_case
    (balance_of). The launchpad token ABI shares KOIN's standard entry
@@ -61,6 +82,8 @@ const K = {
   devWif: '',
   collectionAddr: '',
   collectionWif: '',
+  /* Trade Koinos orderbook DEX (mainnet only — no testnet deployment). */
+  dexOrderbook: '',
   /* rc_limit for ordinary co-signed operations. Mana is not spent up to
      this limit — it only caps the charge — and it regenerates, so a
      generous fixed ceiling beats a fragile estimation round-trip. A real
@@ -83,6 +106,7 @@ function configure(opts) {
 const net = () => NETWORKS[K.network];
 const enabled = () => !!K.devWif;
 const nftEnabled = () => !!(K.devWif && K.collectionAddr && K.collectionWif);
+const dexEnabled = () => !!(K.devWif && K.dexOrderbook);
 
 function provider() {
   if (!_provider) {
@@ -141,8 +165,17 @@ const collectionContract = (signer) => new Contract({
   id: K.collectionAddr, abi: COLLECTION_ABI, provider: provider(),
   ...(signer ? { signer } : {}),
 });
+/* A collection at an arbitrary address (a per-user "Upload" collection). */
+const collectionContractAt = (addr, signer) => new Contract({
+  id: addr, abi: COLLECTION_ABI, provider: provider(),
+  ...(signer ? { signer } : {}),
+});
 const tokenContractAt = (addr, signer) => new Contract({
   id: addr, abi: TOKEN_ABI, provider: provider(),
+  ...(signer ? { signer } : {}),
+});
+const orderbookContract = (signer) => new Contract({
+  id: K.dexOrderbook, abi: ORDERBOOK_ABI, provider: provider(),
   ...(signer ? { signer } : {}),
 });
 
@@ -423,12 +456,141 @@ async function submitCosigned(signedTx, preparedId, userAddr) {
     signature. The collection contract authorizes mint/set_metadata by
     owner OR its own account; the server holds the collection key. */
 async function mintNft(to, tokenIdHex, metadataJson) {
-  const key = Signer.fromWif(K.collectionWif);
-  const ops = [
-    await opNftMint(to, tokenIdHex),
-    await opNftSetMetadata(tokenIdHex, metadataJson),
-  ];
-  return sendAsAccount(key, ops);
+  return mintToCollection(K.collectionWif, to, tokenIdHex, metadataJson);
+}
+
+/** Mint into ANY collection whose key the server holds (the shared Paint
+    collection, or a per-user Upload collection) — no visitor signature.
+    The collection authorizes mint by owner OR its own account, and we sign
+    as the collection. */
+async function mintToCollection(collectionWif, to, tokenIdHex, metadataJson) {
+  const key = Signer.fromWif(collectionWif);
+  const c = collectionContractAt(key.getAddress(), key);
+  const { operation: mintOp } = await c.functions.mint({ to, token_id: tokenIdHex }, { onlyOperation: true });
+  const { operation: metaOp } = await c.functions.set_metadata({ token_id: tokenIdHex, metadata: metadataJson }, { onlyOperation: true });
+  return sendAsAccount(key, [mintOp, metaOp]);
+}
+
+/** Has this collection been initialized on-chain? (get_info answers with a
+    real name once initialize has run.) */
+async function collectionInitializedAt(address) {
+  try {
+    const { result } = await collectionContractAt(address).functions.get_info({});
+    return !!(result && result.name && result.name !== 'Uninitialized collection');
+  } catch (_) { return false; }
+}
+
+/** Launch a fresh KCS-2 collection for `spec.owner` — no visitor signature.
+    Same shape as launchToken (upload the audited collection WASM to a fresh
+    account, then initialize), tolerant of a timed-out-but-mined step. The
+    key is minted + persisted by the caller. Returns { address, uploadTx, initTx }. */
+async function launchCollection(spec, wasmBuffer, key) {
+  key.provider = provider();
+  const address = key.getAddress();
+
+  let uploadTx = null;
+  try {
+    uploadTx = await sendAsAccount(key, [await opUploadContract(address, wasmBuffer)], { rcLimit: K.rcLimitUpload });
+  } catch (e) {
+    if (!e.broadcast) throw e;
+    uploadTx = e.txId || null;
+  }
+
+  let initTx = null, lastErr = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt) await new Promise(r => setTimeout(r, 4000 + attempt * 2000));
+    if (await collectionInitializedAt(address)) { initTx = initTx || 'confirmed'; lastErr = null; break; }
+    try {
+      const c = collectionContractAt(address, key);
+      const { operation } = await c.functions.initialize({
+        name: spec.name, symbol: spec.symbol, uri: spec.uri || '',
+        description: spec.description || '', owner: spec.owner,
+        royalty_bps: String(spec.royaltyBps || 0), royalty_address: spec.owner,
+      }, { onlyOperation: true });
+      initTx = await sendAsAccount(key, [operation]);
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      if (/already been set up/i.test(String(e.message || e))) { initTx = initTx || 'confirmed'; lastErr = null; break; }
+    }
+  }
+  if (lastErr) {
+    const err = new Error(`collection deployed at ${address} but initialize failed: ${lastErr.message || lastErr}`);
+    err.address = address;
+    err.uploadTx = uploadTx;
+    throw err;
+  }
+  return { address, uploadTx, initTx };
+}
+
+/* ---------------- Trade Koinos DEX (orderbook) ----------------
+   Listing a token against KOIN is FREE (mana only): create the TOKEN/KOIN
+   market (permissionless — the gateway signs and pays), then place a SELL
+   order that escrows only the user's OWN token. The KOIN only ever comes
+   from a later buyer. Mainnet only — no orderbook is deployed on testnet. */
+
+/** Price the orderbook wants = human KOIN-per-token × 10^(8 + quoteDec − baseDec).
+    KOIN is 8 decimals, so the exponent is (16 − tokenDecimals). Returns an
+    integer string; throws if it would round to zero. */
+function toDexPrice(humanKoinPerToken, tokenDecimals) {
+  const s = String(humanKoinPerToken).trim();
+  if (!/^\d+(\.\d+)?$/.test(s) || Number(s) <= 0) throw new Error('price must be a positive number');
+  const exp = 16 - Number(tokenDecimals);
+  if (exp < 0) throw new Error('too many token decimals for a KOIN price');
+  const [whole, frac = ''] = s.split('.');
+  // shift the decimal point right by `exp`, as integer string math
+  const digits = (whole + frac).replace(/^0+(?=\d)/, '');
+  const shift = exp - frac.length;
+  let out;
+  if (shift >= 0) out = BigInt(digits) * (10n ** BigInt(shift));
+  else out = BigInt(digits) / (10n ** BigInt(-shift));
+  if (out <= 0n) throw new Error('price is too small for this token’s decimals');
+  return out.toString();
+}
+
+/** The marketId for TOKEN/KOIN if it already exists, else null. */
+async function dexMarketId(tokenAddr) {
+  const koin = net().koinContract;
+  const { result } = await orderbookContract().functions.get_markets({});
+  const markets = (result && result.markets) || [];
+  for (const m of markets) {
+    if (m.baseToken === tokenAddr && m.quoteToken === koin) return Number(m.marketId);
+  }
+  return null;
+}
+
+/** Ensure the TOKEN/KOIN market exists (create it, dev-signed + dev-paid, if
+    not) and return its marketId. create_market is permissionless. */
+async function ensureDexMarket(tokenAddr) {
+  let id = await dexMarketId(tokenAddr);
+  if (id != null) return id;
+  const { operation } = await orderbookContract(devSigner()).functions.create_market({
+    baseToken: tokenAddr, quoteToken: net().koinContract, minBaseAmount: '1',
+  }, { onlyOperation: true });
+  await devTx([operation]);
+  // Read back the id (the create result isn't surfaced through devTx).
+  for (let i = 0; i < 3 && id == null; i++) {
+    id = await dexMarketId(tokenAddr);
+    if (id == null) await new Promise(r => setTimeout(r, 2500));
+  }
+  if (id == null) throw new Error('market was created but could not be read back — try again');
+  return id;
+}
+
+/** Ops for a user to LIST `quantityUnits` of their token as a SELL order at
+    `priceUnits` (orderbook price units), escrowing only their own token:
+    approve(token → orderbook, quantity) + place_order(side=SELL, GTC). */
+async function opsDexSell(tokenAddr, owner, marketId, priceUnits, quantityUnits) {
+  const token = tokenContractAt(tokenAddr);
+  const ob = orderbookContract();
+  const { operation: approveOp } = await token.functions.approve(
+    { owner, spender: K.dexOrderbook, value: String(quantityUnits) }, { onlyOperation: true });
+  const { operation: orderOp } = await ob.functions.place_order({
+    owner, marketId, side: 1 /* SELL base for quote */,
+    price: String(priceUnits), quantity: String(quantityUnits), flags: 0 /* GTC */,
+  }, { onlyOperation: true });
+  return [approveOp, orderOp];
 }
 
 /** A fresh Koinos account for a launch: { key, address, wif }. The caller
@@ -522,9 +684,10 @@ const tokenIdToCode = (hex) => {
 };
 
 module.exports = {
-  configure, net, enabled, nftEnabled, K,
+  configure, net, enabled, nftEnabled, dexEnabled, K,
   provider, devSigner, devAddress, isAddr, chainId, sanitizeAbi,
-  koinContract, vhpContract, collectionContract, tokenContractAt,
+  koinContract, vhpContract, collectionContract, collectionContractAt,
+  tokenContractAt, orderbookContract,
   fromSatsExact, toUnits, fromUnits,
   koinBalance, mana, headInfo, supplies,
   collectionInfo, collectionSupply, tokensOfOwner, nftOwner, nftMetadata,
@@ -532,7 +695,9 @@ module.exports = {
   opKoinTransfer, opNftMint, opNftSetMetadata, opNftTransfer,
   opTokenTransfer, opTokenMint, opTokenBurn, opUploadContract, opTokenInitialize,
   devTx, sendAsAccount, prepareUserTx, submitCosigned, queueTx,
-  mintNft, launchToken, newAccount, tokenInitialized,
+  mintNft, mintToCollection, launchToken, launchCollection, newAccount,
+  tokenInitialized, collectionInitializedAt,
+  toDexPrice, dexMarketId, ensureDexMarket, opsDexSell,
   verifyAuthSignature, codeToTokenId, tokenIdToCode,
-  COLLECTION_ABI, TOKEN_ABI, KOIN_ABI,
+  COLLECTION_ABI, TOKEN_ABI, KOIN_ABI, ORDERBOOK_ABI,
 };

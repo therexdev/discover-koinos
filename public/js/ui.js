@@ -87,30 +87,178 @@ const UI = (() => {
   }
 
   /* ---- header ---- */
+  let _cfg = null;
   async function initHeader() {
     const chip = $('#addr-chip');
     const paint = () => {
       const a = Wallet.address();
       if (chip) {
         chip.classList.toggle('empty', !a);
-        $('.addr-txt', chip).textContent = a ? short(a) : 'no account yet';
+        $('.addr-txt', chip).textContent = a ? short(a) : 'Connect';
       }
     };
     paint();
     document.addEventListener('dk:account', paint);
+    // The header chip: no account → open the sign-in modal; account → menu.
+    if (chip) chip.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (Wallet.address()) accountMenu(chip); else openLogin();
+    });
+    handleAuthReturn();   // pick up an X (Twitter) redirect if we came back from one
     try {
       const cfg = await Api.config();
+      _cfg = cfg;
       const badge = $('#net-badge');
       if (badge) {
         if (cfg.demo) { badge.textContent = 'demo mode'; badge.classList.add('demo'); }
         else badge.textContent = cfg.testnet ? cfg.networkLabel.replace('Koinos ', '') : 'mainnet';
       }
+      if (cfg.auth && cfg.auth.google) loadGoogle(cfg.auth.googleClientId);
       return cfg;
     } catch (e) {
       const badge = $('#net-badge');
       if (badge) { badge.textContent = 'offline'; badge.classList.add('demo'); }
       return null;
     }
+  }
+
+  /* ---------------- sign-in modal ---------------- */
+
+  let _modal = null, _googleReady = false;
+  function buildLoginModal() {
+    if (_modal) return _modal;
+    const d = document.createElement('dialog');
+    d.className = 'modal login-modal';
+    d.innerHTML = `
+      <h3>Get your Koinos account</h3>
+      <p class="sub">One account, four ways in. Everything on this site is free either way.</p>
+      <div class="auth-opts">
+        <div id="auth-google" class="auth-opt g-slot" hidden></div>
+        <button class="auth-opt" id="auth-x" hidden><span class="ic">𝕏</span> Continue with X</button>
+        <button class="auth-opt primary" id="auth-local"><span class="ic">🔑</span> Create a Local Wallet <em>recommended</em></button>
+        <button class="auth-opt" id="auth-import-toggle"><span class="ic">📥</span> Import a private key</button>
+        <div id="auth-import" hidden>
+          <label class="field">Private key (WIF)
+            <input type="text" id="auth-wif" placeholder="5K… / L… / K…" autocomplete="off">
+          </label>
+          <button class="btn small" id="auth-import-go">Import</button>
+        </div>
+      </div>
+      <p class="hint" id="auth-custodial-note">Google and X are convenience accounts: the gateway keeps your key <strong>encrypted</strong> and hands it to this browser when you sign in — you can export it any time on the Wallet page. A Local Wallet never leaves your device.</p>
+      <div style="text-align:right;margin-top:14px"><button class="btn ghost small" id="auth-close">Close</button></div>`;
+    document.body.appendChild(d);
+    _modal = d;
+
+    $('#auth-close', d).addEventListener('click', () => d.close());
+    $('#auth-local', d).addEventListener('click', () => {
+      try { ensureAccount(); d.close(); } catch (_) {}
+    });
+    $('#auth-import-toggle', d).addEventListener('click', () => {
+      const box = $('#auth-import', d); box.hidden = !box.hidden; if (!box.hidden) $('#auth-wif', d).focus();
+    });
+    $('#auth-import-go', d).addEventListener('click', () => {
+      const wif = $('#auth-wif', d).value.trim();
+      if (!wif) return toast('Paste a private key first', 'err');
+      try { const a = Wallet.importAccount(wif); document.dispatchEvent(new CustomEvent('dk:account')); markDone('wallet'); d.close(); toast('Account imported — ' + short(a), 'ok'); }
+      catch (_) { toast('That does not look like a valid WIF key', 'err'); }
+    });
+    $('#auth-x', d).addEventListener('click', () => { location.href = '/auth/x/login'; });
+    return d;
+  }
+
+  function openLogin() {
+    const d = buildLoginModal();
+    // Reflect the current server config each time (it may load after boot).
+    const x = _cfg && _cfg.auth && _cfg.auth.x;
+    $('#auth-x', d).hidden = !x;
+    const g = $('#auth-google', d);
+    if (g) { g.hidden = !_googleReady; if (_googleReady) renderGoogleButton(); }
+    if (typeof d.showModal === 'function') d.showModal(); else d.setAttribute('open', '');
+  }
+
+  /* ---------------- Google GSI ---------------- */
+
+  function loadGoogle(clientId) {
+    if (!clientId || _googleReady || document.getElementById('gsi-script')) return;
+    const s = document.createElement('script');
+    s.id = 'gsi-script'; s.src = 'https://accounts.google.com/gsi/client'; s.async = true; s.defer = true;
+    s.onload = () => {
+      try {
+        window.google.accounts.id.initialize({
+          client_id: clientId,
+          callback: async (resp) => {
+            try {
+              const r = await Wallet.loginGoogle(resp.credential);
+              markDone('wallet');
+              if (_modal) _modal.close();
+              toast('Signed in with Google — ' + short(r.address), 'ok');
+            } catch (e) { toast(e.message || 'Google sign-in failed', 'err'); }
+          },
+        });
+        _googleReady = true;
+        const g = _modal && $('#auth-google', _modal);
+        if (g && _modal.open) { g.hidden = false; renderGoogleButton(); }
+      } catch (_) { /* GSI unavailable — the other methods still work */ }
+    };
+    document.head.appendChild(s);
+  }
+  function renderGoogleButton() {
+    const g = _modal && $('#auth-google', _modal);
+    if (!g || !_googleReady || g.dataset.rendered) return;
+    try { window.google.accounts.id.renderButton(g, { theme: 'filled_black', size: 'large', width: 320, text: 'continue_with' }); g.dataset.rendered = '1'; }
+    catch (_) {}
+  }
+
+  /* ---------------- X (Twitter) redirect return ---------------- */
+
+  function handleAuthReturn() {
+    const q = new URLSearchParams(location.search);
+    if (q.get('auth') === 'x' && q.get('claim')) {
+      Wallet.claimX(q.get('claim'))
+        .then((r) => { markDone('wallet'); toast('Signed in with X — ' + (r.label || short(r.address)), 'ok'); })
+        .catch((e) => toast(e.message || 'X sign-in failed', 'err'))
+        .finally(() => cleanAuthQuery());
+    } else if (q.get('auth') === 'x_error') {
+      toast('X sign-in: ' + (q.get('msg') || 'failed'), 'err');
+      cleanAuthQuery();
+    }
+  }
+  function cleanAuthQuery() {
+    const u = new URL(location.href); u.searchParams.delete('auth'); u.searchParams.delete('claim'); u.searchParams.delete('msg');
+    history.replaceState({}, '', u.pathname + (u.search || '') + u.hash);
+  }
+
+  /* ---------------- account menu (logout) ---------------- */
+
+  let _menu = null;
+  function accountMenu(anchor) {
+    if (_menu) { _menu.remove(); _menu = null; return; }
+    const a = Wallet.address();
+    const m = document.createElement('div');
+    m.className = 'acct-menu';
+    m.innerHTML = `
+      <div class="acct-addr">${escapeHtml(a)}</div>
+      <a href="/wallet">Wallet &amp; backup</a>
+      <button id="acct-copy">Copy address</button>
+      <button id="acct-logout" class="danger">Log out</button>`;
+    document.body.appendChild(m);
+    const r = anchor.getBoundingClientRect();
+    m.style.top = (r.bottom + 6) + 'px';
+    m.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+    _menu = m;
+    const close = (ev) => { if (_menu && !_menu.contains(ev.target) && ev.target !== anchor) { _menu.remove(); _menu = null; document.removeEventListener('click', close, true); } };
+    setTimeout(() => document.addEventListener('click', close, true), 0);
+    $('#acct-copy', m).addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(a); toast('Address copied', 'ok'); } catch (_) { window.prompt('Copy your address:', a); }
+      m.remove(); _menu = null;
+    });
+    $('#acct-logout', m).addEventListener('click', () => {
+      m.remove(); _menu = null;
+      const backed = sessionStorage.getItem('dk_backed_up') === '1';
+      if (!backed && !confirm('Log out?\n\nIf this is a Local Wallet you have not backed up, its key will be gone for good. Social accounts (Google/X) can be recovered by signing in again.')) return;
+      Wallet.logout();
+      toast('Logged out', 'ok');
+    });
   }
 
   /** Make sure an account exists, announce it, mark step done. */
@@ -134,5 +282,5 @@ const UI = (() => {
     return addr;
   }
 
-  return { $, $$, short, fmt, toast, statusStepper, txLink, escapeHtml, initHeader, ensureAccount, progress, markDone, paintRibbon };
+  return { $, $$, short, fmt, toast, statusStepper, txLink, escapeHtml, initHeader, ensureAccount, openLogin, progress, markDone, paintRibbon, config: () => _cfg };
 })();

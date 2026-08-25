@@ -20,8 +20,8 @@ const { Signer, Provider, Contract, Transaction, utils } = require('koilib');
 const { pickRpc, NETWORKS } = require('../tools/rpc');
 
 const NETWORK = process.env.KOINOS_NETWORK || 'harbinger';
-const COLLECTION_NAME = process.env.PLAYGROUND_NAME || 'Discover Koinos Playground';
-const COLLECTION_SYMBOL = process.env.PLAYGROUND_SYMBOL || 'DISCVR';
+const COLLECTION_NAME = process.env.PLAYGROUND_NAME || 'Discover Koinos Paint';
+const COLLECTION_SYMBOL = process.env.PLAYGROUND_SYMBOL || 'PAINT';
 
 function loadEnvFile(file) {
   if (!file || !fs.existsSync(file)) return;

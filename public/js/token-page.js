@@ -98,10 +98,25 @@
     }
   });
 
-  /* hide the destination field for mint/burn */
-  $('#act-kind').addEventListener('change', () => {
-    $('#act-to-field').style.display = $('#act-kind').value === 'token_transfer' ? '' : 'none';
-  });
+  /* show the right fields per action: destination for transfer, price for
+     DEX listing. */
+  function syncActionFields() {
+    const k = $('#act-kind').value;
+    $('#act-to-field').style.display = k === 'token_transfer' ? '' : 'none';
+    $('#act-price-field').style.display = k === 'list_dex' ? '' : 'none';
+    $('#dex-note').style.display = k === 'list_dex' ? '' : 'none';
+  }
+  $('#act-kind').addEventListener('change', syncActionFields);
+
+  /* Gate the DEX option to where Trade Koinos actually exists (mainnet). */
+  (async () => {
+    const cfg = await Api.config().catch(() => null);
+    const opt = [...$('#act-kind').options].find(o => o.value === 'list_dex');
+    if (opt && cfg && cfg.dex && !cfg.dex.available) {
+      opt.textContent = '📈 List on DEX (mainnet only)';
+      opt.disabled = true;
+    }
+  })();
 
   $('#btn-act').addEventListener('click', async () => {
     const btn = $('#btn-act');
@@ -109,10 +124,34 @@
     const kind = $('#act-kind').value;
     const amount = $('#act-amount').value.trim();
     const to = $('#act-to').value.trim();
+    const price = $('#act-price').value.trim();
     if (!token) { toast('Pick a token first', 'err'); return; }
     if (!/^\d+(\.\d+)?$/.test(amount) || Number(amount) <= 0) { toast('Amount must be a positive number', 'err'); return; }
     if (kind === 'token_transfer' && !to) { toast('Paste a destination address', 'err'); return; }
+    if (kind === 'list_dex' && (!/^\d+(\.\d+)?$/.test(price) || Number(price) <= 0)) { toast('Set a price per token in KOIN', 'err'); $('#act-price').focus(); return; }
     btn.disabled = true;
+
+    if (kind === 'list_dex') {
+      const st = statusStepper($('#act-status'), [
+        'Signing with your key — locally',
+        'Ensuring the TOKEN/KOIN market on Trade Koinos…',
+        'Placing your sell order (escrows only your tokens)…',
+      ]);
+      try {
+        st.next();
+        const proof = await Wallet.proof('list-dex');
+        const prep = await Api.listDex({ ...proof, token, amount, price });
+        st.next();
+        let signed;
+        if (prep.demo) { signed = { id: 'demo' }; } else { signed = await Wallet.signTx(prep.tx); }
+        st.next();
+        const r = await Api.submit({ ref: prep.ref, transaction: signed });
+        st.done(txLink(r.txid, r.explorer, r.demo) + `<div class="txline">listed on Trade Koinos${prep.explorerAddr ? ` — <a href="${escapeHtml(prep.explorerAddr)}" target="_blank" rel="noopener">orderbook ↗</a>` : ''}</div>`);
+        toast('Listed on Trade Koinos — a buyer brings the KOIN', 'ok');
+      } catch (e) { st.fail(e.message); } finally { btn.disabled = false; }
+      return;
+    }
+
     const st = statusStepper($('#act-status'), [
       'Gateway prepares the exact transaction',
       'Your key signs it — locally',

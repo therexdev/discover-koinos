@@ -97,7 +97,20 @@ node server.js
 | `TRUST_PROXY_HOPS` | `0` | proxy hops in front (Hostinger/CDN) for real client IPs |
 | `MAX_LAUNCHES_PER_DAY` | `10` | global daily token-launch budget |
 | `MAX_MINTS_PER_DAY` | `200` | global daily NFT-mint budget |
+| `MAX_COLLECTIONS_PER_DAY` | `10` | global daily Upload-collection deploy budget |
+| `MAX_UPLOAD_BYTES` | `3145728` | max uploaded NFT image size (3MB) |
+| `PUBLIC_ORIGIN` | *(derived)* | canonical https origin — used for uploaded-image URLs and the X callback |
 | `DEMO_MODE` | — | `1` forces demo mode |
+| **Social login** | | *(all optional; Local Wallet + Import always work)* |
+| `LOGIN_SECRET` | — | **required for Google/X** — the key that encrypts custodied wallets. Without it, social login stays off |
+| `GOOGLE_CLIENT_ID` | — | Google OAuth **client ID** (`…apps.googleusercontent.com`) — enables the Google button |
+| `X_CLIENT_ID` / `X_CLIENT_SECRET` | — | X (Twitter) OAuth 2.0 app credentials — enable the X button |
+| `X_REDIRECT_URI` | `PUBLIC_ORIGIN/auth/x/callback` | must exactly match a callback URL registered in your X app |
+| **Integrations** | | |
+| `OURO_API_BASE` | `https://ouro.lifestyle` | OURO marketplace to auto-register collections on |
+| `OURO_ADMIN_KEY` | — | optional — lifts OURO's 10-registrations/day/IP limit |
+| `AUTO_LIST_OURO` | `1` | set `0` to stop auto-registering collections on OURO |
+| `DEX_ORDERBOOK_ADDR` | mainnet orderbook | Trade Koinos orderbook contract (mainnet only) |
 
 ### The mana budget, honestly
 
@@ -139,6 +152,62 @@ cd contracts && npm ci && npm run build
 compile time into state, written once by a one-shot `initialize` that only the
 token's own account can call. One reviewed binary serves every token ever
 launched.
+
+## Sign-in options
+
+Four ways in, all converging on the same thing — the browser ends up holding
+a Koinos key and signs locally:
+
+- **Local Wallet** (recommended, non-custodial) — generated in the browser, never leaves it.
+- **Import** — paste a WIF backup.
+- **Google** and **X (Twitter)** — *custodial at rest*: the server generates a
+  keypair, stores it **AES-256-GCM encrypted** (key derived from `LOGIN_SECRET`),
+  and releases the plaintext key to your browser on a verified login. From then
+  on it signs locally like a Local Wallet, and the Wallet page can export it any
+  time. The trade-off is stated in the UI.
+
+**Enabling Google:** create an OAuth **Web** client at
+console.cloud.google.com → Credentials, add your origin to *Authorized
+JavaScript origins*, and set `GOOGLE_CLIENT_ID` + `LOGIN_SECRET`. (The CSP only
+widens to Google's origins when this is set.)
+
+**Enabling X:** create an OAuth 2.0 app at developer.x.com with a **confidential
+client**, add `PUBLIC_ORIGIN/auth/x/callback` as a redirect URI, and set
+`X_CLIENT_ID`, `X_CLIENT_SECRET`, `PUBLIC_ORIGIN` + `LOGIN_SECRET`. The flow is
+OAuth 2.0 with PKCE; the key is handed back via a one-time claim code, never in
+a URL.
+
+Without `LOGIN_SECRET` the social buttons simply don't appear.
+
+## Create an NFT — two ways
+
+- **Paint** → mints into the one shared **Discover Koinos Paint** collection
+  (`GATEWAY_COLLECTION_*`). The pixel art is stored on-chain as an SVG in the
+  token metadata.
+- **Upload** → deploys **your own** KCS-2 collection (asks a collection name;
+  remembers it so you can mint into it again), stores the image on the gateway
+  (referenced by URL from on-chain metadata), and mints your NFT into it.
+
+Uploaded images live under `data/uploads/` and are served at `/uploads/…`. For
+production, back that directory up or move it to persistent/object storage —
+and IPFS is the natural upgrade so images aren't gateway-hosted.
+
+## Auto-list on OURO
+
+When you're live on **mainnet**, every collection the gateway creates (the Paint
+collection and each Upload collection) is auto-registered on the **OURO**
+marketplace (`POST {OURO_API_BASE}/api/collections`) so it's browsable there.
+This is discoverability only — putting an individual NFT *up for sale* on OURO
+needs a KOIN price and the owner's signature, which is a separate step. OURO is
+mainnet, so registration is skipped on testnet.
+
+## List a token on Trade Koinos (DEX)
+
+On **mainnet**, the Token Lab's *List on Trade Koinos DEX* action creates the
+`TOKEN/KOIN` market (permissionless, mana only) and places a **SELL** order that
+escrows only the tokens you list — no KOIN required; a buyer brings the KOIN.
+It's free (mana only). Trade Koinos is only deployed on mainnet, so the action
+is disabled on testnet.
 
 ## Security model
 

@@ -12,3 +12,8 @@ node_modules/
 contracts/node_modules/
 contracts/token/build/
 contracts/token/asconfig.json
+
+# uploaded NFT images (runtime, may be large)
+data/uploads/
+data/logins.json
+data/collection-keys.json

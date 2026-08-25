@@ -32,6 +32,9 @@
 }
 
 * { box-sizing: border-box; }
+/* `hidden` must always win — several components set display via id/class
+   selectors that would otherwise out-specify the UA [hidden] rule. */
+[hidden] { display: none !important; }
 html { scroll-behavior: smooth; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
@@ -342,3 +345,57 @@ dialog.modal {
 }
 dialog.modal::backdrop { background: rgba(10, 8, 16, .7); backdrop-filter: blur(3px); }
 dialog.modal h3 { margin-top: 0; }
+
+/* ---------------- sign-in modal + account menu ---------------- */
+
+.login-modal { max-width: 420px; }
+.login-modal h3 { margin-top: 0; }
+.login-modal .sub { color: var(--text-dim); margin-bottom: 18px; }
+.auth-opts { display: flex; flex-direction: column; gap: 10px; }
+.auth-opt {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  font-family: var(--font-head); font-weight: 700; font-size: .98rem; color: var(--text-bright);
+  background: var(--bg-inset); border: 1px solid var(--line-strong); border-radius: 10px;
+  padding: 13px 16px; cursor: pointer; transition: border-color .12s, background .12s;
+}
+.auth-opt:hover { border-color: var(--accent); background: var(--bg-card); }
+.auth-opt .ic { font-size: 1.15rem; width: 22px; text-align: center; flex: none; }
+.auth-opt em { margin-left: auto; font-style: normal; font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--good); }
+.auth-opt.primary { background: linear-gradient(90deg, rgba(120,39,230,.28), rgba(142,68,173,.18)); border-color: var(--accent); }
+.auth-opt.g-slot { padding: 0; border: 0; background: transparent; min-height: 44px; justify-content: center; }
+.auth-opt.g-slot:hover { background: transparent; }
+#auth-import { display: flex; flex-direction: column; gap: 8px; padding: 4px 2px 0; }
+.login-modal .hint { margin-top: 16px; }
+
+.acct-menu {
+  position: fixed; z-index: 200; min-width: 220px;
+  background: var(--bg-card); border: 1px solid var(--line-strong); border-radius: 12px;
+  box-shadow: var(--shadow); padding: 8px; display: flex; flex-direction: column; gap: 2px;
+}
+.acct-menu .acct-addr { font-family: var(--font-mono); font-size: .72rem; color: var(--text-dim); word-break: break-all; padding: 8px 10px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.acct-menu a, .acct-menu button {
+  display: block; width: 100%; text-align: left; background: transparent; border: 0;
+  color: var(--text); font-family: var(--font-body); font-size: .92rem; font-weight: 600;
+  padding: 9px 10px; border-radius: 7px; cursor: pointer;
+}
+.acct-menu a:hover, .acct-menu button:hover { background: var(--bg-raised); color: var(--text-bright); text-decoration: none; }
+.acct-menu button.danger { color: var(--bad); }
+
+/* ---------------- NFT studio tabs + upload ---------------- */
+
+.tabs { display: flex; gap: 6px; background: var(--bg-inset); border: 1px solid var(--line); border-radius: 11px; padding: 5px; margin-bottom: 20px; }
+.tabs button {
+  flex: 1; font-family: var(--font-head); font-weight: 700; font-size: .95rem; color: var(--text-dim);
+  background: transparent; border: 0; border-radius: 8px; padding: 11px; cursor: pointer;
+}
+.tabs button[aria-selected="true"] { background: var(--bg-card); color: var(--text-bright); box-shadow: 0 1px 0 rgba(255,255,255,.03); }
+.tabpane[hidden] { display: none; }
+
+.dropzone {
+  border: 2px dashed var(--line-strong); border-radius: var(--radius); background: var(--bg-inset);
+  padding: 26px; text-align: center; cursor: pointer; transition: border-color .12s, background .12s;
+}
+.dropzone:hover, .dropzone.drag { border-color: var(--accent); background: var(--bg-card); }
+.dropzone .hint { margin: 6px 0 0; }
+.upload-preview { max-width: 100%; max-height: 260px; border-radius: var(--radius-sm); margin: 0 auto; display: block; }
+.badge-ouro { display: inline-flex; align-items: center; gap: 5px; font-size: .72rem; font-weight: 700; color: var(--accent-soft); border: 1px solid var(--line-strong); border-radius: 999px; padding: 3px 9px; }

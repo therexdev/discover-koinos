@@ -1,0 +1,583 @@
+{
+    "methods": {
+        "create_market": {
+            "input": "orderbook.create_market_arguments",
+            "output": "orderbook.create_market_result",
+            "description": "Create a new trading market between two tokens. Permissionless: anyone may list a pair; the transaction payer covers the mana. Both addresses must answer decimals() like a live token contract",
+            "entryPoint": 807604807,
+            "readOnly": false
+        },
+        "set_min_base_amount": {
+            "input": "orderbook.set_min_base_amount_arguments",
+            "output": "orderbook.set_min_base_amount_result",
+            "description": "Adjust a market's minimum order size (contract authority only; repair hatch for unusable permissionless listings)",
+            "entryPoint": 3440789165,
+            "readOnly": false
+        },
+        "place_order": {
+            "input": "orderbook.place_order_arguments",
+            "output": "orderbook.place_order_result",
+            "description": "Place a limit order. Crossing orders are matched immediately with price-time priority; any remainder is escrowed on the book (GTC), refunded (IOC) or the call fails (POST_ONLY if it would cross)",
+            "entryPoint": 372990117,
+            "readOnly": false
+        },
+        "cancel_order": {
+            "input": "orderbook.cancel_order_arguments",
+            "output": "orderbook.cancel_order_result",
+            "description": "Cancel an open order and refund its escrow (order owner authority)",
+            "entryPoint": 2218931612,
+            "readOnly": false
+        },
+        "get_markets": {
+            "input": "orderbook.get_markets_arguments",
+            "output": "orderbook.get_markets_result",
+            "description": "Get all markets with their stats",
+            "entryPoint": 2944069267,
+            "readOnly": true
+        },
+        "get_orderbook": {
+            "input": "orderbook.get_orderbook_arguments",
+            "output": "orderbook.get_orderbook_result",
+            "description": "Get the resting orders of a market orderbook, best priced first",
+            "entryPoint": 1161772971,
+            "readOnly": true
+        },
+        "get_order": {
+            "input": "orderbook.get_order_arguments",
+            "output": "orderbook.get_order_result",
+            "description": "Get a single open order by id",
+            "entryPoint": 1167154361,
+            "readOnly": true
+        },
+        "get_user_orders": {
+            "input": "orderbook.get_user_orders_arguments",
+            "output": "orderbook.get_user_orders_result",
+            "description": "Get the open orders of an account, ordered by ascending order id",
+            "entryPoint": 1262709602,
+            "readOnly": true
+        },
+        "get_trades": {
+            "input": "orderbook.get_trades_arguments",
+            "output": "orderbook.get_trades_result",
+            "description": "Get the most recent trades of a market, newest first",
+            "entryPoint": 3023924143,
+            "readOnly": true
+        }
+    },
+    "types": {
+        "nested": {
+            "orderbook": {
+                "nested": {
+                    "market_config": {
+                        "fields": {
+                            "marketId": {
+                                "type": "uint32",
+                                "id": 1
+                            },
+                            "baseToken": {
+                                "type": "bytes",
+                                "id": 2,
+                                "options": {
+                                    "(koinos.btype)": "CONTRACT_ID"
+                                }
+                            },
+                            "quoteToken": {
+                                "type": "bytes",
+                                "id": 3,
+                                "options": {
+                                    "(koinos.btype)": "CONTRACT_ID"
+                                }
+                            },
+                            "minBaseAmount": {
+                                "type": "uint64",
+                                "id": 4,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "lastPrice": {
+                                "type": "uint64",
+                                "id": 5,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "tradeHead": {
+                                "type": "uint32",
+                                "id": 6
+                            },
+                            "tradeCount": {
+                                "type": "uint64",
+                                "id": 7,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "baseVolume": {
+                                "type": "uint64",
+                                "id": 8,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "quoteVolume": {
+                                "type": "uint64",
+                                "id": 9,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            }
+                        }
+                    },
+                    "order_object": {
+                        "fields": {
+                            "id": {
+                                "type": "uint64",
+                                "id": 1,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "marketId": {
+                                "type": "uint32",
+                                "id": 2
+                            },
+                            "side": {
+                                "type": "uint32",
+                                "id": 3
+                            },
+                            "price": {
+                                "type": "uint64",
+                                "id": 4,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "quantity": {
+                                "type": "uint64",
+                                "id": 5,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "remaining": {
+                                "type": "uint64",
+                                "id": 6,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "escrow": {
+                                "type": "uint64",
+                                "id": 7,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "owner": {
+                                "type": "bytes",
+                                "id": 8,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            },
+                            "timestamp": {
+                                "type": "uint64",
+                                "id": 9,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            }
+                        }
+                    },
+                    "trade_object": {
+                        "fields": {
+                            "seq": {
+                                "type": "uint64",
+                                "id": 1,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "marketId": {
+                                "type": "uint32",
+                                "id": 2
+                            },
+                            "price": {
+                                "type": "uint64",
+                                "id": 3,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "quantity": {
+                                "type": "uint64",
+                                "id": 4,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "quoteAmount": {
+                                "type": "uint64",
+                                "id": 5,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "takerSide": {
+                                "type": "uint32",
+                                "id": 6
+                            },
+                            "timestamp": {
+                                "type": "uint64",
+                                "id": 7,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "maker": {
+                                "type": "bytes",
+                                "id": 8,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            },
+                            "taker": {
+                                "type": "bytes",
+                                "id": 9,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            },
+                            "makerOrderId": {
+                                "type": "uint64",
+                                "id": 10,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            }
+                        }
+                    },
+                    "global_state": {
+                        "fields": {
+                            "nextOrderId": {
+                                "type": "uint64",
+                                "id": 1,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "nextTradeSeq": {
+                                "type": "uint64",
+                                "id": 2,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "nextMarketId": {
+                                "type": "uint32",
+                                "id": 3
+                            }
+                        }
+                    },
+                    "create_market_arguments": {
+                        "fields": {
+                            "baseToken": {
+                                "type": "bytes",
+                                "id": 1,
+                                "options": {
+                                    "(koinos.btype)": "CONTRACT_ID"
+                                }
+                            },
+                            "quoteToken": {
+                                "type": "bytes",
+                                "id": 2,
+                                "options": {
+                                    "(koinos.btype)": "CONTRACT_ID"
+                                }
+                            },
+                            "minBaseAmount": {
+                                "type": "uint64",
+                                "id": 3,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            }
+                        }
+                    },
+                    "create_market_result": {
+                        "fields": {
+                            "marketId": {
+                                "type": "uint32",
+                                "id": 1
+                            }
+                        }
+                    },
+                    "set_min_base_amount_arguments": {
+                        "fields": {
+                            "marketId": {
+                                "type": "uint32",
+                                "id": 1
+                            },
+                            "minBaseAmount": {
+                                "type": "uint64",
+                                "id": 2,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            }
+                        }
+                    },
+                    "set_min_base_amount_result": {
+                        "fields": {}
+                    },
+                    "place_order_arguments": {
+                        "fields": {
+                            "owner": {
+                                "type": "bytes",
+                                "id": 1,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            },
+                            "marketId": {
+                                "type": "uint32",
+                                "id": 2
+                            },
+                            "side": {
+                                "type": "uint32",
+                                "id": 3
+                            },
+                            "price": {
+                                "type": "uint64",
+                                "id": 4,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "quantity": {
+                                "type": "uint64",
+                                "id": 5,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "flags": {
+                                "type": "uint32",
+                                "id": 6
+                            }
+                        }
+                    },
+                    "place_order_result": {
+                        "fields": {
+                            "orderId": {
+                                "type": "uint64",
+                                "id": 1,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "filledQuantity": {
+                                "type": "uint64",
+                                "id": 2,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "filledQuote": {
+                                "type": "uint64",
+                                "id": 3,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "remaining": {
+                                "type": "uint64",
+                                "id": 4,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            }
+                        }
+                    },
+                    "cancel_order_arguments": {
+                        "fields": {
+                            "orderId": {
+                                "type": "uint64",
+                                "id": 1,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            }
+                        }
+                    },
+                    "cancel_order_result": {
+                        "fields": {}
+                    },
+                    "get_markets_arguments": {
+                        "fields": {}
+                    },
+                    "get_markets_result": {
+                        "fields": {
+                            "markets": {
+                                "rule": "repeated",
+                                "type": "market_config",
+                                "id": 1
+                            }
+                        }
+                    },
+                    "get_orderbook_arguments": {
+                        "fields": {
+                            "marketId": {
+                                "type": "uint32",
+                                "id": 1
+                            },
+                            "limit": {
+                                "type": "uint32",
+                                "id": 2
+                            }
+                        }
+                    },
+                    "get_orderbook_result": {
+                        "fields": {
+                            "bids": {
+                                "rule": "repeated",
+                                "type": "order_object",
+                                "id": 1
+                            },
+                            "asks": {
+                                "rule": "repeated",
+                                "type": "order_object",
+                                "id": 2
+                            }
+                        }
+                    },
+                    "get_order_arguments": {
+                        "fields": {
+                            "orderId": {
+                                "type": "uint64",
+                                "id": 1,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            }
+                        }
+                    },
+                    "get_order_result": {
+                        "fields": {
+                            "value": {
+                                "type": "order_object",
+                                "id": 1
+                            }
+                        }
+                    },
+                    "get_user_orders_arguments": {
+                        "fields": {
+                            "owner": {
+                                "type": "bytes",
+                                "id": 1,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            },
+                            "start": {
+                                "type": "uint64",
+                                "id": 2,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "limit": {
+                                "type": "uint32",
+                                "id": 3
+                            }
+                        }
+                    },
+                    "get_user_orders_result": {
+                        "fields": {
+                            "orders": {
+                                "rule": "repeated",
+                                "type": "order_object",
+                                "id": 1
+                            }
+                        }
+                    },
+                    "get_trades_arguments": {
+                        "fields": {
+                            "marketId": {
+                                "type": "uint32",
+                                "id": 1
+                            },
+                            "limit": {
+                                "type": "uint32",
+                                "id": 2
+                            }
+                        }
+                    },
+                    "get_trades_result": {
+                        "fields": {
+                            "trades": {
+                                "rule": "repeated",
+                                "type": "trade_object",
+                                "id": 1
+                            }
+                        }
+                    },
+                    "market_created_event": {
+                        "fields": {
+                            "market": {
+                                "type": "market_config",
+                                "id": 1
+                            },
+                            "creator": {
+                                "type": "bytes",
+                                "id": 2,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            }
+                        }
+                    },
+                    "order_placed_event": {
+                        "fields": {
+                            "order": {
+                                "type": "order_object",
+                                "id": 1
+                            }
+                        }
+                    },
+                    "order_cancelled_event": {
+                        "fields": {
+                            "orderId": {
+                                "type": "uint64",
+                                "id": 1,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "marketId": {
+                                "type": "uint32",
+                                "id": 2
+                            },
+                            "owner": {
+                                "type": "bytes",
+                                "id": 3,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            }
+                        }
+                    },
+                    "trade_event": {
+                        "fields": {
+                            "trade": {
+                                "type": "trade_object",
+                                "id": 1
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

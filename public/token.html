@@ -91,6 +91,7 @@
             <option value="token_transfer">Transfer</option>
             <option value="token_mint">Mint more (owner)</option>
             <option value="token_burn">Burn</option>
+            <option value="list_dex">📈 List on Trade Koinos DEX</option>
           </select>
         </label>
         <label class="field">Amount
@@ -100,6 +101,10 @@
       <label class="field" id="act-to-field">Destination address
         <input type="text" id="act-to" placeholder="1…" autocomplete="off">
       </label>
+      <label class="field" id="act-price-field" style="display:none">Price per token, in KOIN
+        <input type="text" id="act-price" inputmode="decimal" placeholder="0.05" autocomplete="off">
+      </label>
+      <p class="hint" id="dex-note" style="display:none">Lists a SELL order on <strong>Trade Koinos</strong> that escrows only the tokens you list — no KOIN needed. A buyer brings the KOIN. Free (mana only).</p>
       <div class="status" id="act-status"></div>
       <button class="btn ghost" id="btn-act">Do it</button>
     </div>

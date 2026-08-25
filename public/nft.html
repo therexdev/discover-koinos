@@ -32,16 +32,23 @@
 <main class="wrap section">
   <div class="section-head">
     <h1>NFT Studio</h1>
-    <p>Draw something, name it, mint it. It becomes a real token in the
-      <strong>Discover Koinos Playground</strong> collection — image stored on-chain,
-      owned by your address, visible in any explorer. Free, like everything here.</p>
+    <p><strong>Paint</strong> a pixel piece into the shared <strong>Discover Koinos Paint</strong>
+      collection, or <strong>upload</strong> an image and mint it into a collection you own — one
+      you create here and can mint into again. Either way it's a real KCS-2 NFT owned by your
+      address, and your own collections auto-list on the <strong>OURO</strong> marketplace. Free, like everything here.</p>
+  </div>
+
+  <div class="tabs" role="tablist" aria-label="How to create your NFT">
+    <button role="tab" id="tab-paint" aria-selected="true" aria-controls="pane-paint">🎨 Paint it</button>
+    <button role="tab" id="tab-upload" aria-selected="false" aria-controls="pane-upload">🖼️ Upload an image</button>
   </div>
 
   <div class="cards">
-    <div class="card">
+    <!-- ── PAINT: the shared "Discover Koinos Paint" collection ── -->
+    <div class="card tabpane" id="pane-paint" role="tabpanel" aria-labelledby="tab-paint">
       <div class="card-head">
         <div class="card-icon">🎨</div>
-        <div><h3>Draw</h3><p class="sub">16×16 — small canvas, big feelings</p></div>
+        <div><h3>Paint it</h3><p class="sub">Into the shared <strong>Discover Koinos Paint</strong> collection</p></div>
       </div>
       <div class="studio" id="studio">
         <canvas aria-label="Pixel art canvas — draw with your pointer"></canvas>
@@ -58,7 +65,32 @@
       </label>
       <div class="status" id="nft-status"></div>
       <button class="btn" id="btn-mint">Mint it — free</button>
-      <p class="hint">Up to 5 mints per account per day — the playground's mana budget is shared by everyone.</p>
+      <p class="hint">Up to 5 mints per account per day — the shared mana budget is for everyone.</p>
+    </div>
+
+    <!-- ── UPLOAD: your own collection ── -->
+    <div class="card tabpane" id="pane-upload" role="tabpanel" aria-labelledby="tab-upload" hidden>
+      <div class="card-head">
+        <div class="card-icon">🖼️</div>
+        <div><h3>Upload an image</h3><p class="sub">Mint into <strong>your own</strong> collection</p></div>
+      </div>
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Choose or drop an image">
+        <div id="dz-empty"><div style="font-size:2rem">⬆️</div><p style="margin:.4em 0 0">Click or drop an image<br><span class="hint">PNG, JPEG, GIF or WebP · up to 3MB</span></p></div>
+        <img class="upload-preview" id="dz-preview" alt="" hidden>
+        <input type="file" id="file-input" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+      </div>
+      <label class="field">Collection
+        <select class="input" id="coll-select"><option value="__new">+ New collection…</option></select>
+      </label>
+      <label class="field" id="coll-name-field">New collection name
+        <input type="text" id="coll-name" maxlength="64" placeholder="My Art Collection" autocomplete="off">
+      </label>
+      <label class="field">NFT name
+        <input type="text" id="up-name" maxlength="48" placeholder="Untitled #1" autocomplete="off">
+      </label>
+      <div class="status" id="up-status"></div>
+      <button class="btn" id="btn-upload-mint">Mint it — free</button>
+      <p class="hint">A new collection deploys a real KCS-2 contract you own — bigger than a mint, so it counts against a small daily budget. It auto-lists on <strong>OURO</strong> when you're live on mainnet.</p>
     </div>
 
     <div class="card">
