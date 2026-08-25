@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discover Koinos — don't read about it, use it</title>
+<meta name="description" content="Create a wallet, mint an NFT and launch a token — live on the Koinos blockchain, in under a minute, without paying a cent. No signup, no gas, no wallet extension.">
+<link rel="icon" href="/assets/brand/Koinos-Icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Plus+Jakarta+Sans:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="logo" href="/"><img src="/assets/brand/koinos-logomark-white.svg" alt="Koinos"><span>Discover <span class="logo-sub">Koinos</span></span></a>
+    <nav class="nav" aria-label="Main">
+      <a href="/wallet">Wallet</a>
+      <a href="/nft">NFT Studio</a>
+      <a href="/token">Token Lab</a>
+      <a href="/build">Build</a>
+    </nav>
+    <div class="header-right">
+      <span class="badge" id="net-badge">…</span>
+      <a class="addr-chip empty" id="addr-chip" href="/wallet" title="Your Koinos account"><span class="dot"></span><span class="addr-txt">no account yet</span></a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="wrap">
+      <span class="kicker">Feeless · Frictionless · Familiar</span>
+      <h1>Don't read about Koinos.<br>Use it.</h1>
+      <p class="lead">Create a wallet, mint an NFT and launch your own token — live on-chain,
+        in under a minute, without paying a cent. No signup. No gas. No wallet extension.</p>
+      <div class="cta-row">
+        <button class="btn big" id="cta-start">Start — it's free</button>
+        <a class="btn big ghost" href="/build">I'm a developer</a>
+      </div>
+      <p class="cta-note">One click creates a real Koinos account in your browser. Nothing to install, nothing to pay.</p>
+
+      <div class="stats" id="stats" aria-live="polite">
+        <div class="stat"><div class="k">Block height</div><div class="v" id="st-head">—</div></div>
+        <div class="stat"><div class="k">KOIN burned for blocks</div><div class="v" id="st-burn">—</div></div>
+        <div class="stat"><div class="k">Tokens launched here</div><div class="v" id="st-launched">—</div></div>
+        <div class="stat"><div class="k">NFTs minted here</div><div class="v" id="st-minted">—</div></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap">
+    <div class="ribbon" aria-label="Your progress">
+      <span class="step" data-step="wallet"><span class="n">1</span> Wallet</span>
+      <span class="arrow">→</span>
+      <span class="step" data-step="nft"><span class="n">2</span> NFT</span>
+      <span class="arrow">→</span>
+      <span class="step" data-step="token"><span class="n">3</span> Token</span>
+      <span class="arrow">→</span>
+      <span class="step" data-step="build"><span class="n">4</span> Build</span>
+    </div>
+
+    <div class="cards" id="actions">
+
+      <!-- ── 1 · WALLET ─────────────────────────────── -->
+      <div class="card" id="card-wallet">
+        <span class="free-tag">FREE</span>
+        <div class="card-head">
+          <div class="card-icon">🔑</div>
+          <div><h3>Your wallet, instantly</h3><p class="sub">A real Koinos account, made in your browser</p></div>
+        </div>
+        <div class="grow" id="wallet-body">
+          <p class="sub">No email, no password, no extension. The key is generated on your
+          device and never leaves it.</p>
+        </div>
+        <div id="wallet-done" hidden>
+          <div class="copy-addr" id="wallet-addr"></div>
+          <div class="mana" style="margin-top:12px">
+            <div class="lbl"><span>Mana — your free transaction energy</span><span id="mana-val">…</span></div>
+            <div class="bar"><div class="fill" id="mana-fill"></div></div>
+          </div>
+        </div>
+        <button class="btn" id="btn-create-wallet">Create my account</button>
+        <p class="more"><a href="/wallet">Back it up, import, or top up →</a></p>
+      </div>
+
+      <!-- ── 2 · NFT ────────────────────────────────── -->
+      <div class="card" id="card-nft">
+        <span class="free-tag">FREE</span>
+        <div class="card-head">
+          <div class="card-icon">🎨</div>
+          <div><h3>Mint your first NFT</h3><p class="sub">Draw it. Own it. On-chain in seconds.</p></div>
+        </div>
+        <div class="studio" id="mini-studio">
+          <canvas aria-label="Pixel art canvas — draw with your pointer"></canvas>
+          <div class="palette" role="group" aria-label="Colors"></div>
+          <div class="studio-tools">
+            <button class="btn small ghost" type="button" data-tool="paint" aria-pressed="true">✏️ Paint</button>
+            <button class="btn small ghost" type="button" data-tool="fill" aria-pressed="false">🪣 Fill</button>
+            <button class="btn small ghost" type="button" data-tool="undo">↩ Undo</button>
+            <button class="btn small ghost" type="button" data-tool="clear">🗑 Clear</button>
+          </div>
+        </div>
+        <label class="field">Name your NFT
+          <input type="text" id="nft-name" maxlength="48" placeholder="My first Koinos NFT" autocomplete="off">
+        </label>
+        <div class="status" id="nft-status"></div>
+        <button class="btn" id="btn-mint">Mint it — free</button>
+        <p class="more"><a href="/nft">Bigger studio, your gallery, send to a friend →</a></p>
+      </div>
+
+      <!-- ── 3 · TOKEN ──────────────────────────────── -->
+      <div class="card" id="card-token">
+        <span class="free-tag">FREE</span>
+        <div class="card-head">
+          <div class="card-icon">🪙</div>
+          <div><h3>Launch your own token</h3><p class="sub">A real contract, deployed for you</p></div>
+        </div>
+        <label class="field">Token name
+          <input type="text" id="tok-name" maxlength="64" placeholder="My Community Coin" autocomplete="off">
+        </label>
+        <div class="row2">
+          <label class="field">Symbol
+            <input type="text" id="tok-symbol" maxlength="16" placeholder="MCC" autocomplete="off" style="text-transform:uppercase">
+          </label>
+          <label class="field">Supply
+            <input type="text" id="tok-supply" inputmode="decimal" placeholder="1000000" autocomplete="off">
+          </label>
+        </div>
+        <label class="check"><input type="checkbox" id="tok-mintable">
+          <span>Mintable — let me mint more later<br><span class="hint">Unchecked = fixed supply, forever</span></span>
+        </label>
+        <div class="grow"></div>
+        <div class="status" id="tok-status"></div>
+        <button class="btn" id="btn-launch">Launch it — free</button>
+        <p class="more"><a href="/token">Transfer, mint more, burn, see every launch →</a></p>
+      </div>
+    </div>
+
+    <div class="funnel">
+      <div>
+        <h2>You just used a blockchain.</h2>
+        <p>Real transactions, real contracts, zero fees — that's Koinos mana. Want to see how it works, and build on it?</p>
+      </div>
+      <a class="btn big" href="/build" id="funnel-btn">Show me what just happened →</a>
+    </div>
+  </div>
+
+  <section class="section alt">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Fresh from the playground</h2>
+        <p>Every one of these was made by a visitor like you — and none of them paid a cent.</p>
+      </div>
+      <div class="gallery" id="home-gallery"></div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <img src="/assets/brand/koinos-logo-white.svg" alt="Koinos">
+    <nav class="foot-links" aria-label="Footer">
+      <a href="https://koinos.io" target="_blank" rel="noopener">koinos.io</a>
+      <a href="https://docs.koinos.io" target="_blank" rel="noopener">Docs</a>
+      <a href="https://koinosblocks.com" target="_blank" rel="noopener">Explorer</a>
+      <a href="https://discord.koinos.io" target="_blank" rel="noopener">Discord</a>
+      <a href="/build">Build</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="/js/vendor/koinos.min.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/wallet.js"></script>
+<script src="/js/ui.js"></script>
+<script src="/js/studio.js"></script>
+<script src="/js/index-page.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "name": "discover-koinos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Discover Koinos — the interactive gateway. Create a wallet, mint an NFT and launch a token, live on-chain, free (mana sponsored).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "build": "echo \"no build step — the gateway serves static files and server.js directly\"",
+    "keygen": "node tools/keygen.js",
+    "deploy-playground": "node scripts/deploy-playground.js",
+    "build-contracts": "cd contracts && npm ci && npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "koilib": "^9.2.0"
+  },
+  "license": "MIT"
+}

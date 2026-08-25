@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your wallet — Discover Koinos</title>
+<meta name="description" content="Your real Koinos account: address, balances, mana, backup and import. Made in your browser, sponsored by the gateway.">
+<link rel="icon" href="/assets/brand/Koinos-Icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Plus+Jakarta+Sans:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="logo" href="/"><img src="/assets/brand/koinos-logomark-white.svg" alt="Koinos"><span>Discover <span class="logo-sub">Koinos</span></span></a>
+    <nav class="nav" aria-label="Main">
+      <a href="/wallet" class="active">Wallet</a>
+      <a href="/nft">NFT Studio</a>
+      <a href="/token">Token Lab</a>
+      <a href="/build">Build</a>
+    </nav>
+    <div class="header-right">
+      <span class="badge" id="net-badge">…</span>
+      <a class="addr-chip empty" id="addr-chip" href="/wallet"><span class="dot"></span><span class="addr-txt">no account yet</span></a>
+    </div>
+  </div>
+</header>
+
+<main class="wrap section">
+  <div class="section-head">
+    <h1>Your wallet</h1>
+    <p>A real Koinos account that lives in this browser. The key was generated on your device
+       and has never left it — which also means <strong>only you</strong> can back it up.</p>
+  </div>
+
+  <div class="cards">
+    <div class="card" style="grid-column: span 1">
+      <div class="card-head">
+        <div class="card-icon">🪪</div>
+        <div><h3>Account</h3><p class="sub">Your on-chain identity</p></div>
+      </div>
+      <div class="copy-addr" id="w-addr">no account yet — one click below</div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap">
+        <button class="btn small" id="w-create">Create account</button>
+        <button class="btn small ghost" id="w-copy">Copy address</button>
+      </div>
+      <dl class="kv" style="margin-top:8px">
+        <dt id="w-koin-label">tKOIN balance</dt><dd id="w-koin">—</dd>
+        <dt>NFTs minted</dt><dd id="w-nfts">—</dd>
+        <dt>Tokens launched</dt><dd id="w-tokens">—</dd>
+      </dl>
+      <div class="mana">
+        <div class="lbl"><span>Mana</span><span id="w-mana">—</span></div>
+        <div class="bar"><div class="fill" id="w-mana-fill"></div></div>
+        <p class="hint">Mana is Koinos' free transaction energy. It regenerates on its own —
+        and while you're here, the gateway's sponsor wallet lends you its mana, so
+        everything is free even with an empty balance.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="card-icon">🛟</div>
+        <div><h3>Back it up</h3><p class="sub">The key IS the account</p></div>
+      </div>
+      <p class="sub">If this browser's storage is cleared, an un-backed-up account is gone
+        forever — no company can restore it. That's what "your keys" means.</p>
+      <div class="secret-box" id="w-wif" aria-label="Private key, hidden">····································</div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap">
+        <button class="btn small ghost" id="w-reveal">Reveal key</button>
+        <button class="btn small ghost" id="w-copy-wif">Copy key</button>
+        <button class="btn small ghost" id="w-download">Download backup</button>
+      </div>
+      <div class="grow"></div>
+      <h3 style="margin-top:10px">Import an account</h3>
+      <label class="field">Private key (WIF)
+        <input type="text" id="w-import" placeholder="5K… / L… / K…" autocomplete="off">
+      </label>
+      <button class="btn small ghost" id="w-import-btn">Import — replaces the current account</button>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="card-icon">🚰</div>
+        <div><h3>Top up (optional)</h3><p class="sub">You don't need funds to play</p></div>
+      </div>
+      <p class="sub">Everything on this site is sponsored. But if you want your own
+        <span id="w-symbol">tKOIN</span> to explore beyond the gateway:</p>
+      <ul class="linklist" id="w-faucets"></ul>
+      <div class="grow"></div>
+      <p class="hint" id="w-kondor-note">Already use the <a href="https://chrome.google.com/webstore/detail/kondor/ghipkefkpgkladckmlmdnadmcchefhjl" target="_blank" rel="noopener">Kondor</a> wallet extension?
+      You can import this account into Kondor with the key above — same account, more tools.</p>
+    </div>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <img src="/assets/brand/koinos-logo-white.svg" alt="Koinos">
+    <nav class="foot-links" aria-label="Footer">
+      <a href="https://koinos.io" target="_blank" rel="noopener">koinos.io</a>
+      <a href="https://docs.koinos.io" target="_blank" rel="noopener">Docs</a>
+      <a href="https://koinosblocks.com" target="_blank" rel="noopener">Explorer</a>
+      <a href="https://discord.koinos.io" target="_blank" rel="noopener">Discord</a>
+      <a href="/build">Build</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="/js/vendor/koinos.min.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/wallet.js"></script>
+<script src="/js/ui.js"></script>
+<script src="/js/wallet-page.js"></script>
+</body>
+</html>

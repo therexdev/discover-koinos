@@ -1,0 +1,14 @@
+# secrets — never commit keys
+gateway.env
+*.env
+data/token-keys.json
+
+# runtime state
+data/*.json
+!data/.gitkeep
+
+# deps & builds
+node_modules/
+contracts/node_modules/
+contracts/token/build/
+contracts/token/asconfig.json

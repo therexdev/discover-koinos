@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package launchpad;
+
+import "koinos/options.proto";
+
+// A fungible token anyone can launch from the Discover Koinos gateway.
+// The audited KCS-4 contract it builds on fixes name, symbol and decimals
+// at COMPILE time, which would mean a separate binary — and a separate
+// compiler run — for every creator. Here that identity lives in state
+// instead and is written once at setup, so a single reviewed binary
+// serves every token ever launched from the gateway.
+
+message config {
+   string name = 1;
+   string symbol = 2;
+   uint32 decimals = 3;
+   // May the owner mint more after launch? Fixed-supply tokens say no,
+   // and the flag can never be flipped afterwards.
+   bool mintable = 4;
+   // Set the moment setup succeeds; the guard against a second setup
+   // rewriting a token people already hold balances of.
+   bool initialized = 5;
+}
+
+message initialize_args {
+   string name = 1;
+   string symbol = 2;
+   uint32 decimals = 3;
+   // Minted to the owner during setup, in smallest units.
+   uint64 initial_supply = 4 [jstype = JS_STRING];
+   bool mintable = 5;
+   // Who owns the token afterwards: further mints (if mintable) and
+   // ownership transfers.
+   bytes owner = 6 [(koinos.btype) = ADDRESS];
+}
+
+message initialized_event {
+   string name = 1;
+   string symbol = 2;
+   uint32 decimals = 3;
+   uint64 initial_supply = 4 [jstype = JS_STRING];
+   bytes owner = 5 [(koinos.btype) = ADDRESS];
+}
+
+message transfer_ownership_args {
+   bytes to = 1 [(koinos.btype) = ADDRESS];
+}

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NFT Studio — Discover Koinos</title>
+<meta name="description" content="Draw pixel art and mint it as a real NFT on Koinos — free, no gas, no wallet extension. Then send it to a friend.">
+<link rel="icon" href="/assets/brand/Koinos-Icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Plus+Jakarta+Sans:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="logo" href="/"><img src="/assets/brand/koinos-logomark-white.svg" alt="Koinos"><span>Discover <span class="logo-sub">Koinos</span></span></a>
+    <nav class="nav" aria-label="Main">
+      <a href="/wallet">Wallet</a>
+      <a href="/nft" class="active">NFT Studio</a>
+      <a href="/token">Token Lab</a>
+      <a href="/build">Build</a>
+    </nav>
+    <div class="header-right">
+      <span class="badge" id="net-badge">…</span>
+      <a class="addr-chip empty" id="addr-chip" href="/wallet"><span class="dot"></span><span class="addr-txt">no account yet</span></a>
+    </div>
+  </div>
+</header>
+
+<main class="wrap section">
+  <div class="section-head">
+    <h1>NFT Studio</h1>
+    <p>Draw something, name it, mint it. It becomes a real token in the
+      <strong>Discover Koinos Playground</strong> collection — image stored on-chain,
+      owned by your address, visible in any explorer. Free, like everything here.</p>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-head">
+        <div class="card-icon">🎨</div>
+        <div><h3>Draw</h3><p class="sub">16×16 — small canvas, big feelings</p></div>
+      </div>
+      <div class="studio" id="studio">
+        <canvas aria-label="Pixel art canvas — draw with your pointer"></canvas>
+        <div class="palette" role="group" aria-label="Colors"></div>
+        <div class="studio-tools">
+          <button class="btn small ghost" type="button" data-tool="paint" aria-pressed="true">✏️ Paint</button>
+          <button class="btn small ghost" type="button" data-tool="fill" aria-pressed="false">🪣 Fill</button>
+          <button class="btn small ghost" type="button" data-tool="undo">↩ Undo</button>
+          <button class="btn small ghost" type="button" data-tool="clear">🗑 Clear</button>
+        </div>
+      </div>
+      <label class="field">Name your NFT
+        <input type="text" id="nft-name" maxlength="48" placeholder="Tiny Purple Legend" autocomplete="off">
+      </label>
+      <div class="status" id="nft-status"></div>
+      <button class="btn" id="btn-mint">Mint it — free</button>
+      <p class="hint">Up to 5 mints per account per day — the playground's mana budget is shared by everyone.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="card-icon">🖼️</div>
+        <div><h3>Your collection</h3><p class="sub">Everything this account has minted</p></div>
+      </div>
+      <div class="gallery" id="my-gallery"><p class="sub">Nothing yet — your first mint will appear here.</p></div>
+      <div class="grow"></div>
+      <h3>Send one to a friend</h3>
+      <p class="sub">A real on-chain transfer, sponsored like everything else. Signed by
+        <em>your</em> key — the gateway only pays the mana, it can't move your things.</p>
+      <label class="field">NFT
+        <select class="input" id="send-select"><option value="">— pick one you own —</option></select>
+      </label>
+      <label class="field">Their Koinos address
+        <input type="text" id="send-to" placeholder="1…" autocomplete="off">
+      </label>
+      <div class="status" id="send-status"></div>
+      <button class="btn ghost" id="btn-send">Send it</button>
+    </div>
+  </div>
+
+  <section class="section" style="padding-top:20px">
+    <div class="section-head">
+      <h2>Fresh from the playground</h2>
+      <p>Minted by other visitors — none of them paid a cent either.</p>
+    </div>
+    <div class="gallery" id="community-gallery"></div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <img src="/assets/brand/koinos-logo-white.svg" alt="Koinos">
+    <nav class="foot-links" aria-label="Footer">
+      <a href="https://koinos.io" target="_blank" rel="noopener">koinos.io</a>
+      <a href="https://docs.koinos.io" target="_blank" rel="noopener">Docs</a>
+      <a href="https://koinosblocks.com" target="_blank" rel="noopener">Explorer</a>
+      <a href="https://discord.koinos.io" target="_blank" rel="noopener">Discord</a>
+      <a href="/build">Build</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="/js/vendor/koinos.min.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/wallet.js"></script>
+<script src="/js/ui.js"></script>
+<script src="/js/studio.js"></script>
+<script src="/js/nft-page.js"></script>
+</body>
+</html>

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build — Discover Koinos</title>
+<meta name="description" content="What actually happened when you clicked: mana sharing, payer/payee co-signing, contracts as accounts. Now build it yourself on Koinos.">
+<link rel="icon" href="/assets/brand/Koinos-Icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Plus+Jakarta+Sans:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="logo" href="/"><img src="/assets/brand/koinos-logomark-white.svg" alt="Koinos"><span>Discover <span class="logo-sub">Koinos</span></span></a>
+    <nav class="nav" aria-label="Main">
+      <a href="/wallet">Wallet</a>
+      <a href="/nft">NFT Studio</a>
+      <a href="/token">Token Lab</a>
+      <a href="/build" class="active">Build</a>
+    </nav>
+    <div class="header-right">
+      <span class="badge" id="net-badge">…</span>
+      <a class="addr-chip empty" id="addr-chip" href="/wallet"><span class="dot"></span><span class="addr-txt">no account yet</span></a>
+    </div>
+  </div>
+</header>
+
+<main class="wrap section">
+  <div class="section-head">
+    <h1>What just happened</h1>
+    <p>Everything you clicked was a real blockchain interaction. No test doubles, no
+      "simulated environment" — the transaction ids link to a public explorer because
+      they exist. Here's the machinery, in four ideas.</p>
+  </div>
+
+  <div class="explain">
+    <div class="x">
+      <div class="n">01 · the wallet</div>
+      <h3>Keys, not accounts</h3>
+      <p>That "Create my account" click generated a keypair <em>in your browser</em> with
+        koilib. The address is derived from the public key. There is no signup because
+        there is nothing to register — on Koinos, holding a key IS having an account.</p>
+      <pre class="code"><span class="k">const</span> signer = <span class="k">new</span> Signer({ privateKey });
+<span class="k">const</span> address = signer.getAddress(); <span class="c">// that's it. that's the account.</span></pre>
+    </div>
+
+    <div class="x">
+      <div class="n">02 · zero fees</div>
+      <h3>Mana, not gas</h3>
+      <p>Koinos meters computation with <strong>mana</strong> — an energy that every KOIN
+        holder has and that <em>regenerates over ~5 days</em>. It can be capped, spent and
+        recharged, but never bought or sold. And crucially: someone else can pay yours.</p>
+      <p>Every transaction you sent here named two parties: <code>payee</code> (you — your
+        nonce, your authority) and <code>payer</code> (the gateway's sponsor wallet — its
+        mana). You signed, the sponsor co-signed, nobody paid a fee. That's not a promo
+        budget; it's a protocol feature called <strong>mana sharing</strong>.</p>
+      <pre class="code"><span class="k">new</span> Transaction({ options: {
+  payer: sponsorWallet,   <span class="c">// their mana burns (and regenerates)</span>
+  payee: yourAddress,     <span class="c">// your nonce, your authority</span>
+}})</pre>
+    </div>
+
+    <div class="x">
+      <div class="n">03 · the NFT</div>
+      <h3>Contracts are accounts</h3>
+      <p>Your pixel art went into the <em>Discover Koinos Playground</em> collection — a
+        KCS-2 contract. On Koinos a contract is just an account with WASM uploaded to it,
+        and it can act as itself: the collection authorized your free mint with its own
+        signature while the sponsor paid. The image? Stored on-chain, in the token's
+        metadata, as an SVG your grandchildren can still decode.</p>
+    </div>
+
+    <div class="x">
+      <div class="n">04 · the token</div>
+      <h3>You deployed a contract</h3>
+      <p>The Token Lab uploaded ~60KB of audited KCS-4 bytecode to a fresh account and
+        called <code>initialize</code> with your name, symbol and supply. Two real
+        transactions. On most chains that's a paid, tooling-heavy afternoon; here the
+        sponsor's mana absorbed it, and the whole supply landed in your wallet.</p>
+      <pre class="code">{ upload_contract: { contract_id, bytecode } }  <span class="c">// tx 1</span>
+initialize({ name, symbol, decimals, supply })  <span class="c">// tx 2 — yours</span></pre>
+    </div>
+  </div>
+
+  <div class="funnel" style="margin-top:50px">
+    <div>
+      <h2>Now build the next thing</h2>
+      <p>Everything you just used is open source — including this gateway.</p>
+    </div>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-head">
+        <div class="card-icon">📚</div>
+        <div><h3>Learn</h3><p class="sub">From zero to contract</p></div>
+      </div>
+      <ul class="linklist">
+        <li><a href="https://docs.koinos.io" target="_blank" rel="noopener"><span>Koinos documentation</span><span class="where">docs.koinos.io</span></a></li>
+        <li><a href="https://docs.koinos.io/developers/testnet/" target="_blank" rel="noopener"><span>The Harbinger testnet + faucet</span><span class="where">free tKOIN</span></a></li>
+        <li><a href="https://koinos.io/whitepaper" target="_blank" rel="noopener"><span>Why mana works this way</span><span class="where">whitepaper</span></a></li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <div class="card-icon">🧰</div>
+        <div><h3>Tooling</h3><p class="sub">The stack this site runs on</p></div>
+      </div>
+      <ul class="linklist">
+        <li><a href="https://github.com/joticajulian/koilib" target="_blank" rel="noopener"><span>koilib — JS/TS client library</span><span class="where">GitHub</span></a></li>
+        <li><a href="https://github.com/joticajulian/koinosbox" target="_blank" rel="noopener"><span>@koinosbox/contracts — audited KCS contracts</span><span class="where">GitHub</span></a></li>
+        <li><a href="https://github.com/koinos/koinos-sdk-as" target="_blank" rel="noopener"><span>AssemblyScript contract SDK</span><span class="where">GitHub</span></a></li>
+        <li><a href="https://harbinger.koinosblocks.com" target="_blank" rel="noopener"><span>Testnet explorer</span><span class="where">koinosblocks</span></a></li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <div class="card-icon">💬</div>
+        <div><h3>Community</h3><p class="sub">Builders live here</p></div>
+      </div>
+      <ul class="linklist">
+        <li><a href="https://discord.koinos.io" target="_blank" rel="noopener"><span>Koinos Discord</span><span class="where">+ the #faucet bot</span></a></li>
+        <li><a href="https://t.me/koinos_community" target="_blank" rel="noopener"><span>Telegram</span><span class="where">community</span></a></li>
+        <li><a href="https://koinos.io" target="_blank" rel="noopener"><span>koinos.io</span><span class="where">the mothership</span></a></li>
+      </ul>
+      <div class="grow"></div>
+      <p class="hint">This gateway is open source too — fork it, run it, point your
+        community at it. Sponsoring your users' mana costs KOIN you already hold,
+        not fees you burn.</p>
+    </div>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <img src="/assets/brand/koinos-logo-white.svg" alt="Koinos">
+    <nav class="foot-links" aria-label="Footer">
+      <a href="https://koinos.io" target="_blank" rel="noopener">koinos.io</a>
+      <a href="https://docs.koinos.io" target="_blank" rel="noopener">Docs</a>
+      <a href="https://koinosblocks.com" target="_blank" rel="noopener">Explorer</a>
+      <a href="https://discord.koinos.io" target="_blank" rel="noopener">Discord</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="/js/vendor/koinos.min.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/wallet.js"></script>
+<script src="/js/ui.js"></script>
+<script src="/js/build-page.js"></script>
+</body>
+</html>
