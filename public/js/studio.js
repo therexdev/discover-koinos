@@ -28,6 +28,11 @@ function PixelStudio(root) {
       ctx.fillStyle = PALETTE[cells[i]];
       ctx.fillRect(i % GRID, Math.floor(i / GRID), 1, 1);
     }
+    if (typeof focused !== 'undefined' && focused) {
+      const cx = cursor % GRID, cy = Math.floor(cursor / GRID);
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 0.15;
+      ctx.strokeRect(cx + 0.08, cy + 0.08, 0.84, 0.84);
+    }
   }
 
   function cellAt(ev) {
@@ -77,6 +82,39 @@ function PixelStudio(root) {
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', stop);
 
+  /* ---- keyboard drawing (WCAG 2.1.1): arrows move a cursor, Enter/Space
+     paints or fills. A small live hint announces the position. ---- */
+  let cursor = 8 * GRID + 8, focused = false;
+  canvas.tabIndex = 0;
+  const hint = document.createElement('div');
+  hint.className = 'hint'; hint.setAttribute('aria-live', 'polite');
+  hint.style.textAlign = 'center';
+  canvas.insertAdjacentElement('afterend', hint);
+  function announce() {
+    const x = cursor % GRID, y = Math.floor(cursor / GRID);
+    hint.textContent = focused ? `Cursor at column ${x + 1}, row ${y + 1} — arrows move, Enter paints` : '';
+  }
+  canvas.addEventListener('focus', () => { focused = true; paintCanvas(); announce(); });
+  canvas.addEventListener('blur', () => { focused = false; paintCanvas(); announce(); });
+  canvas.addEventListener('keydown', (ev) => {
+    const x = cursor % GRID, y = Math.floor(cursor / GRID);
+    let nx = x, ny = y;
+    if (ev.key === 'ArrowLeft') nx = Math.max(0, x - 1);
+    else if (ev.key === 'ArrowRight') nx = Math.min(GRID - 1, x + 1);
+    else if (ev.key === 'ArrowUp') ny = Math.max(0, y - 1);
+    else if (ev.key === 'ArrowDown') ny = Math.min(GRID - 1, y + 1);
+    else if (ev.key === 'Enter' || ev.key === ' ') {
+      snapshot();
+      if (tool === 'fill') flood(cursor, cells[cursor], color);
+      else cells[cursor] = color;
+      paintCanvas(); announce();
+      ev.preventDefault(); return;
+    } else return;
+    cursor = ny * GRID + nx;
+    paintCanvas(); announce();
+    ev.preventDefault();
+  });
+
   /* palette buttons */
   const pal = root.querySelector('.palette');
   PALETTE.forEach((c, i) => {
@@ -89,13 +127,15 @@ function PixelStudio(root) {
     b.addEventListener('click', () => {
       color = i; tool = 'paint';
       pal.querySelectorAll('button').forEach((x, j) => x.setAttribute('aria-pressed', String(j === i)));
-      toolBtns.forEach(t => t.setAttribute('aria-pressed', String(t.dataset.tool === 'paint')));
+      modeBtns.forEach(t => t.setAttribute('aria-pressed', String(t.dataset.tool === 'paint')));
     });
     pal.appendChild(b);
   });
 
-  /* tools */
+  /* tools. Only paint/fill are toggle (aria-pressed) buttons; undo/clear
+     are momentary actions and must not claim a pressed state. */
   const toolBtns = [...root.querySelectorAll('[data-tool]')];
+  const modeBtns = toolBtns.filter(b => b.dataset.tool === 'paint' || b.dataset.tool === 'fill');
   toolBtns.forEach(b => b.addEventListener('click', () => {
     if (b.dataset.tool === 'undo') {
       if (undoStack.length) { const prev = undoStack.pop(); cells.splice(0, cells.length, ...prev); paintCanvas(); }
@@ -103,7 +143,7 @@ function PixelStudio(root) {
     }
     if (b.dataset.tool === 'clear') { snapshot(); cells.fill(0); paintCanvas(); return; }
     tool = b.dataset.tool;
-    toolBtns.forEach(t => t.setAttribute('aria-pressed', String(t === b)));
+    modeBtns.forEach(t => t.setAttribute('aria-pressed', String(t === b)));
   }));
 
   /* a friendly seed so the canvas never starts scary-blank: a tiny

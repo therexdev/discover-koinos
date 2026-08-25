@@ -86,9 +86,13 @@
     const name = $('#tok-name').value.trim();
     const symbol = $('#tok-symbol').value.trim().toUpperCase();
     const supply = $('#tok-supply').value.trim();
+    const mintable = $('#tok-mintable').checked;
     if (!name) { toast('Name your token first', 'err'); $('#tok-name').focus(); return; }
     if (!/^[A-Z0-9]{2,16}$/.test(symbol)) { toast('Symbol: 2–16 letters or digits', 'err'); $('#tok-symbol').focus(); return; }
-    if (!/^\d+(\.\d+)?$/.test(supply) || Number(supply) <= 0) { toast('Supply must be a positive number', 'err'); $('#tok-supply').focus(); return; }
+    if (!/^\d+(\.\d+)?$/.test(supply) || (Number(supply) <= 0 && !mintable)) {
+      toast(mintable ? 'Supply must be a number (0 is fine for a mintable token)' : 'Supply must be a positive number', 'err');
+      $('#tok-supply').focus(); return;
+    }
     UI.ensureAccount(); paintWallet();
     btn.disabled = true;
     const st = statusStepper($('#tok-status'), [
@@ -100,7 +104,7 @@
       st.next();
       const proof = await Wallet.proof('launch-token');
       st.next();
-      const r = await Api.launchToken({ ...proof, name, symbol, supply, decimals: 8, mintable: $('#tok-mintable').checked });
+      const r = await Api.launchToken({ ...proof, name, symbol, supply, decimals: 8, mintable });
       st.next();
       st.done(
         `<div class="txline">contract: ${r.explorer ? `<a href="${escapeHtml(r.explorer)}" target="_blank" rel="noopener">${escapeHtml(r.address)}</a>` : escapeHtml(r.address)}</div>`

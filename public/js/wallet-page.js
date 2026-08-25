@@ -1,11 +1,14 @@
 /* Wallet page: account details, balances, backup, import, faucets. */
 'use strict';
 
-(async () => {
+(() => {
   const { $, toast, escapeHtml } = UI;
-  const cfg = await UI.initHeader().catch(() => null);
 
-  if (cfg) {
+  /* Header + config must NOT gate button wiring — a slow /api/config would
+     leave every control dead. Fire it, fill the config-dependent bits when
+     it lands, and wire everything else synchronously below. */
+  UI.initHeader().then((cfg) => {
+    if (!cfg) return;
     const sym = cfg.nativeSymbol || 'tKOIN';
     $('#w-symbol').textContent = sym;
     $('#w-koin-label').textContent = sym + ' balance';
@@ -13,7 +16,7 @@
     $('#w-faucets').innerHTML = faucets.length
       ? faucets.map(f => `<li><a href="${escapeHtml(f.url)}" target="_blank" rel="noopener"><span>${escapeHtml(f.name)}</span><span class="where">↗</span></a><p class="hint" style="padding:0 18px 12px">${escapeHtml(f.note)}</p></li>`).join('')
       : '<li><a href="https://koinos.io/get-koin" target="_blank" rel="noopener"><span>Where to get KOIN</span><span class="where">↗</span></a></li>';
-  }
+  }).catch(() => {});
 
   async function paint() {
     const addr = Wallet.address();
@@ -34,12 +37,25 @@
     }
   }
 
-  $('#w-create').addEventListener('click', () => { UI.ensureAccount(); paint(); });
-  $('#w-copy').addEventListener('click', async () => {
+  /* navigator.clipboard is undefined on insecure (http) origins and can
+     reject; degrade to a select-and-copy prompt instead of failing silently. */
+  async function copy(text, okMsg) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return toast(okMsg, 'ok');
+      }
+      throw new Error('no clipboard');
+    } catch (_) {
+      window.prompt('Copy with Ctrl/Cmd+C, then Enter:', text);
+    }
+  }
+
+  $('#w-create').addEventListener('click', () => { try { UI.ensureAccount(); } catch (_) { return; } paint(); });
+  $('#w-copy').addEventListener('click', () => {
     const a = Wallet.address();
     if (!a) return toast('Create an account first', 'err');
-    await navigator.clipboard.writeText(a);
-    toast('Address copied', 'ok');
+    copy(a, 'Address copied');
   });
 
   /* backup */
@@ -51,11 +67,10 @@
     box.textContent = showing ? wif : '····································';
     $('#w-reveal').textContent = showing ? 'Hide key' : 'Reveal key';
   });
-  $('#w-copy-wif').addEventListener('click', async () => {
+  $('#w-copy-wif').addEventListener('click', () => {
     const wif = Wallet.exportWif();
     if (!wif) return toast('Create an account first', 'err');
-    await navigator.clipboard.writeText(wif);
-    toast('Private key copied — paste it somewhere SAFE', 'ok');
+    copy(wif, 'Private key copied — paste it somewhere SAFE');
   });
   $('#w-download').addEventListener('click', () => {
     const wif = Wallet.exportWif();
@@ -69,8 +84,12 @@
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `koinos-account-${Wallet.address().slice(0, 8)}.txt`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(a.href);
+    a.remove();
+    /* revoke AFTER the browser has had a tick to start the download —
+       Safari/older Firefox abort a synchronous revoke. */
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     toast('Backup downloaded', 'ok');
   });
 

@@ -15,12 +15,28 @@ const Wallet = (() => {
   const LS_KEY = 'dk_wif';
   let signer = null;
   let account = null;
+  let memKey = null;        // in-memory fallback when localStorage is blocked
 
   const hasLib = () => typeof Signer !== 'undefined';
 
+  /* Some browsers (Block-all-site-data, sandboxed webviews, private mode)
+     THROW on any localStorage access. Never let that kill page wiring —
+     fall back to a per-session in-memory key. */
+  function storeGet() {
+    try { return localStorage.getItem(LS_KEY); } catch (_) { return memKey; }
+  }
+  function storeSet(wif) {
+    memKey = wif;
+    try { localStorage.setItem(LS_KEY, wif); } catch (_) { /* memory-only this session */ }
+  }
+  const storageEphemeral = () => {
+    try { localStorage.setItem('dk_probe', '1'); localStorage.removeItem('dk_probe'); return false; }
+    catch (_) { return true; }
+  };
+
   function loadKey() {
     if (signer) return true;
-    const wif = localStorage.getItem(LS_KEY);
+    const wif = storeGet();
     if (!wif) return false;
     try {
       signer = Signer.fromWif(wif);
@@ -39,7 +55,7 @@ const Wallet = (() => {
     crypto.getRandomValues(bytes);
     const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
     signer = new Signer({ privateKey: hex });
-    localStorage.setItem(LS_KEY, signer.getPrivateKey('wif', true));
+    storeSet(signer.getPrivateKey('wif', true));
     account = signer.getAddress();
     return account;
   }
@@ -47,14 +63,14 @@ const Wallet = (() => {
   /** Import an account from a WIF backup. Replaces the current key. */
   function importAccount(wif) {
     const s = Signer.fromWif(String(wif).trim());
-    localStorage.setItem(LS_KEY, String(wif).trim());
+    storeSet(String(wif).trim());
     signer = s;
     account = s.getAddress();
     return account;
   }
 
   /** The WIF backup of this account — show it, never send it anywhere. */
-  const exportWif = () => (loadKey() ? localStorage.getItem(LS_KEY) : null);
+  const exportWif = () => (loadKey() ? storeGet() : null);
 
   const address = () => (loadKey() ? account : null);
   const exists = () => loadKey();
@@ -90,6 +106,6 @@ const Wallet = (() => {
 
   return {
     hasLib, exists, address, createAccount, importAccount, exportWif,
-    proof, signTx, sponsoredAction,
+    proof, signTx, sponsoredAction, storageEphemeral,
   };
 })();

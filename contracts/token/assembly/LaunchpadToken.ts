@@ -122,6 +122,9 @@ export class LaunchpadToken extends Token {
     const c = this.config.get()!;
     System.require(c.initialized, "this token has not been set up yet");
     System.require(c.mintable, "this token was launched with a fixed supply");
+    // Proto omits empty bytes: a malformed op arrives with to == null, and
+    // dereferencing it traps with only "module exited due to trap".
+    System.require(args.to != null && args.to!.length > 0, "a recipient is required");
     /* Owner OR the token's own account. The gateway keeps the token
        account's key as the upgrade authority — already strictly stronger
        than mint rights — and this is what lets a FREE mint happen with no
@@ -142,6 +145,9 @@ export class LaunchpadToken extends Token {
    * @event token.burn_event token.burn_args
    */
   burn(args: token.burn_args): void {
+    // Proto omits empty bytes: from arrives null on a malformed op, and the
+    // non-null assertion below would trap. Normalize-then-validate.
+    System.require(args.from != null && args.from!.length > 0, "a source account is required");
     const isAuthorized = this.check_authority(args.from!, args.value);
     System.require(isAuthorized, "from has not authorized burn");
     this._burn(args);

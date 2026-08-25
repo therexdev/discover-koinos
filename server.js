@@ -89,17 +89,63 @@ const saveCounters = () => saveJson('counters.json', registry.counters);
 const saveTokenKeys = () => saveJson('token-keys.json', tokenKeys, { secret: true });
 
 function dayKey() { return new Date().toISOString().slice(0, 10); }
-function bumpDaily(kind) {
+function rollDay() {
   const day = dayKey();
-  if (!registry.counters.day || registry.counters.day !== day) {
-    registry.counters = { day, launches: 0, mints: 0 };
+  if (registry.counters.day !== day) {
+    registry.counters = { day, launches: 0, mints: 0, seq: registry.counters.seq || 0 };
   }
-  registry.counters[kind] = (registry.counters[kind] || 0) + 1;
-  saveCounters();
 }
 function dailyCount(kind) {
-  return (registry.counters.day === dayKey() && registry.counters[kind]) || 0;
+  rollDay();
+  return registry.counters[kind] || 0;
 }
+
+/* Reserve a daily-budget slot SYNCHRONOUSLY — before any await — so
+   concurrent requests can't all read a stale count and sail past the
+   ceiling together (a TOCTOU that would drain the sponsor's whole day).
+   Returns a release() that refunds the slot if the work then fails. */
+function reserveDaily(kind, max) {
+  rollDay();
+  if ((registry.counters[kind] || 0) >= max) return null;
+  registry.counters[kind] = (registry.counters[kind] || 0) + 1;
+  saveCounters();
+  let released = false;
+  return () => {
+    if (released) return; released = true;
+    rollDay();
+    registry.counters[kind] = Math.max(0, (registry.counters[kind] || 0) - 1);
+    saveCounters();
+  };
+}
+
+/* A monotonic, persisted, synchronously-allocated id — two concurrent
+   mints can never derive the same DK code (which would collide on-chain
+   and desync the registry). */
+function nextSeq() {
+  rollDay();
+  registry.counters.seq = (registry.counters.seq || 0) + 1;
+  saveCounters();
+  return registry.counters.seq;
+}
+
+/* Reserve `cost` KOIN of the sponsor's mana SYNCHRONOUSLY (before the
+   balance read), so N expensive actions firing at once can't each read the
+   same healthy balance and all proceed, overdrawing the wallet to zero.
+   Proceeds only if what remains after OTHER in-flight reservations still
+   clears `floor`. Returns release() — call it in a finally. */
+let manaReserved = 0;
+async function reserveMana(cost, floor, onLow) {
+  manaReserved += cost;
+  let released = false;
+  const release = () => { if (!released) { released = true; manaReserved -= cost; } };
+  let live = 0;
+  try { live = await chain.mana(chain.devAddress()); } catch (_) { live = 0; }
+  if (live - manaReserved + cost < floor) { release(); throw onLow(live); }
+  return release;
+}
+/* Rough mana costs (KOIN) for reservation math; the real charge is metered
+   on-chain — these only bound how many actions run at once. */
+const COST_MINT = 2, COST_LAUNCH = 50, COST_ACTION = 2;
 
 /* ---------------- rate limiting ---------------- */
 
@@ -149,14 +195,26 @@ function verifyProof(body, action) {
 
 /* ---------------- prepared-transaction refs ---------------- */
 
-const PREPARED = new Map();  // ref -> { id, address, expires }
-function rememberPrepared(id, address) {
+const PREPARED = new Map();  // ref -> { id, address, meta, expires }
+function rememberPrepared(id, address, meta) {
   const ref = crypto.randomBytes(16).toString('hex');
-  PREPARED.set(ref, { id, address, expires: Date.now() + 10 * 60000 });
+  PREPARED.set(ref, { id, address, meta: meta || null, expires: Date.now() + 10 * 60000 });
   if (PREPARED.size > 5000) {
     for (const [k, v] of PREPARED) if (v.expires < Date.now()) PREPARED.delete(k);
   }
   return ref;
+}
+
+/* Apply the registry side-effect of a confirmed user transaction — the
+   chain moved, so the gateway's own index must follow, or 'Your collection'
+   goes stale and a second send of the same NFT sails through prepare only
+   to fail cryptically on-chain. */
+function applyConfirmed(meta) {
+  if (!meta) return;
+  if (meta.action === 'nft_transfer') {
+    const rec = registry.nfts.find(n => n.tokenId === meta.tokenId && n.owner === meta.from);
+    if (rec) { rec.owner = meta.to; saveNfts(); }
+  }
 }
 
 /* ---------------- pixel art -> SVG ----------------
@@ -283,30 +341,36 @@ api.mintNft = async (body, ip) => {
   if (!name) throw httpError(400, 'give your NFT a name');
   if (rateLimited('mint:addr:' + address, 5, 24 * 3600000)) throw httpError(429, 'that account has minted a lot today — come back tomorrow');
   if (rateLimited('mint:ip:' + ip, 10, 24 * 3600000)) throw httpError(429, 'too many mints from this connection today');
-  if (dailyCount('mints') >= CFG.maxMintsPerDay) throw httpError(503, 'the playground hit today’s mint budget — come back tomorrow');
 
   const svg = pixelsToSvg(body.palette, body.cells);
   const image = 'data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64');
-  const code = 'DK' + String(registry.nfts.length + 1).padStart(5, '0');
-  const tokenId = chain.codeToTokenId(code);
   const metadata = JSON.stringify({
     name, image,
     description: `Minted first-hand at Discover Koinos by ${address}`,
   });
   if (metadata.length > 8192) throw httpError(400, 'that drawing is too detailed to store on-chain — simplify it a little');
 
+  // Reserve the daily slot + a unique id SYNCHRONOUSLY, before any await.
+  const releaseDaily = reserveDaily('mints', CFG.maxMintsPerDay);
+  if (!releaseDaily) throw httpError(503, 'the playground hit today’s mint budget — come back tomorrow');
+  const code = 'DK' + String(nextSeq()).padStart(5, '0');
+  const tokenId = chain.codeToTokenId(code);
+
   let txid;
-  if (DEMO) {
-    txid = demoTxid();
-  } else {
-    if (!chain.nftEnabled()) throw httpError(503, 'the playground collection is not configured yet');
-    const sponsorMana = await chain.mana(chain.devAddress());
-    if (sponsorMana < CFG.minManaMint) throw httpError(503, 'the sponsor wallet is recharging its mana — try again in a few minutes');
-    txid = await chain.mintNft(address, tokenId, metadata);
-  }
+  try {
+    if (DEMO) {
+      txid = demoTxid();
+    } else {
+      if (!chain.nftEnabled()) throw httpError(503, 'the playground collection is not configured yet');
+      const releaseMana = await reserveMana(COST_MINT, CFG.minManaMint,
+        () => httpError(503, 'the sponsor wallet is recharging its mana — try again in a few minutes'));
+      try { txid = await chain.mintNft(address, tokenId, metadata); }
+      finally { releaseMana(); }
+    }
+  } catch (e) { releaseDaily(); throw e; }
   const rec = { code, tokenId, name, image, owner: address, txid, ts: Date.now(), demo: DEMO || undefined };
-  registry.nfts.push(rec); saveNfts(); bumpDaily('mints');
-  return { ok: true, ...rec, explorer: explorerTx(txid) };
+  registry.nfts.push(rec); saveNfts();
+  return { ok: true, ...rec, explorer: DEMO ? null : explorerTx(txid) };
 };
 
 api.launchToken = async (body, ip) => {
@@ -320,36 +384,56 @@ api.launchToken = async (body, ip) => {
   if (!name) throw httpError(400, 'your token needs a name');
   if (!/^[A-Z0-9]{2,16}$/.test(symbol)) throw httpError(400, 'symbol must be 2-16 letters or digits');
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 12) throw httpError(400, 'decimals must be 0-12');
+  const rawSupply = String(body.supply || '0').trim();
   let supplyUnits;
-  try { supplyUnits = chain.toUnits(String(body.supply || '0'), decimals); }
-  catch (e) { throw httpError(400, `bad supply: ${e.message}`); }
+  if ((rawSupply === '' || rawSupply === '0') && mintable) {
+    supplyUnits = '0';   // a mintable token may start empty and be minted into
+  } else {
+    try { supplyUnits = chain.toUnits(rawSupply, decimals); }
+    catch (e) { throw httpError(400, `bad supply: ${e.message}`); }
+  }
 
   if (rateLimited('launch:addr:' + address, 2, 24 * 3600000)) throw httpError(429, 'that account already launched tokens today — come back tomorrow');
   if (rateLimited('launch:ip:' + ip, 3, 24 * 3600000)) throw httpError(429, 'too many launches from this connection today');
-  if (dailyCount('launches') >= CFG.maxLaunchesPerDay) throw httpError(503, 'the gateway hit today’s launch budget — come back tomorrow');
+
+  // Reserve the daily slot SYNCHRONOUSLY, before any await.
+  const releaseDaily = reserveDaily('launches', CFG.maxLaunchesPerDay);
+  if (!releaseDaily) throw httpError(503, 'the gateway hit today’s launch budget — come back tomorrow');
 
   let address2, uploadTx, initTx;
-  if (DEMO) {
-    address2 = demoAddr(); uploadTx = demoTxid(); initTx = demoTxid();
-  } else {
-    if (!chain.enabled()) throw httpError(503, 'the sponsor wallet is not configured yet');
-    const sponsorMana = await chain.mana(chain.devAddress());
-    if (sponsorMana < CFG.minManaLaunch) {
-      throw httpError(503, `the sponsor wallet is recharging its mana (${Math.floor(sponsorMana)} of ${CFG.minManaLaunch} needed) — a token launch stores real bytecode on-chain. Try again later`);
+  try {
+    if (DEMO) {
+      address2 = demoAddr(); uploadTx = demoTxid(); initTx = demoTxid();
+    } else {
+      if (!chain.enabled()) throw httpError(503, 'the sponsor wallet is not configured yet');
+      const releaseMana = await reserveMana(COST_LAUNCH, CFG.minManaLaunch,
+        (live) => httpError(503, `the sponsor wallet is recharging its mana (${Math.floor(live)} of ${CFG.minManaLaunch} needed) — a token launch stores real bytecode on-chain. Try again later`));
+      try {
+        const wasm = fs.readFileSync(TOKEN_WASM);
+        const spec = { name, symbol, decimals, initialSupply: supplyUnits, mintable, owner: address };
+        /* Mint the token's account key HERE and persist it BEFORE any
+           on-chain work: it is the deployed token's sole upgrade authority,
+           and if a launch half-completes (upload lands, initialize times
+           out) this is the only surviving copy. Never let it ride on a
+           thrown Error into the logs. */
+        const acct = chain.newAccount();
+        tokenKeys[acct.address] = acct.wif; saveTokenKeys();
+        const launched = await chain.launchToken(spec, wasm, acct.key);
+        address2 = launched.address; uploadTx = launched.uploadTx; initTx = launched.initTx;
+      } finally { releaseMana(); }
     }
-    const wasm = fs.readFileSync(TOKEN_WASM);
-    const spec = { name, symbol, decimals, initialSupply: supplyUnits, mintable, owner: address };
-    const launched = await chain.launchToken(spec, wasm);
-    address2 = launched.address; uploadTx = launched.uploadTx; initTx = launched.initTx;
-    tokenKeys[address2] = launched.wif; saveTokenKeys();
-  }
+  } catch (e) { releaseDaily(); throw e; }
   const rec = {
     address: address2, name, symbol, decimals, mintable,
     supplyUnits, supply: chain.fromUnits(supplyUnits, decimals),
     owner: address, txid: initTx || uploadTx, uploadTx, ts: Date.now(), demo: DEMO || undefined,
   };
-  registry.tokens.push(rec); saveTokens(); bumpDaily('launches');
-  return { ok: true, ...rec, explorer: explorerAddr(address2), explorerTx: explorerTx(rec.txid) };
+  registry.tokens.push(rec); saveTokens();
+  return {
+    ok: true, ...rec,
+    explorer: DEMO ? null : explorerAddr(address2),
+    explorerTx: DEMO ? null : explorerTx(rec.txid),
+  };
 };
 
 /* Prepared user transactions: the visitor's OWN assets moving, so the
@@ -370,13 +454,16 @@ api.prepare = async (body, ip) => {
   const sponsorMana = await chain.mana(chain.devAddress());
   if (sponsorMana < CFG.minManaAction) throw httpError(503, 'the sponsor wallet is recharging its mana — try again in a few minutes');
 
+  let meta = null;
   if (action === 'nft_transfer') {
     const { tokenId, to } = params;
     if (!chain.isAddr(to)) throw httpError(400, 'a valid destination address is required');
     if (to === address) throw httpError(400, 'that NFT is already yours');
     const rec = registry.nfts.find(n => n.tokenId === tokenId);
     if (!rec) throw httpError(404, 'unknown playground NFT');
+    if (rec.owner !== address) throw httpError(403, 'that NFT is not in your wallet');
     ops.push(await chain.opNftTransfer(address, to, tokenId));
+    meta = { action, tokenId, from: address, to };
   } else if (action === 'token_transfer') {
     const { token, to, amount } = params;
     const rec = registry.tokens.find(t => t.address === token);
@@ -404,7 +491,7 @@ api.prepare = async (body, ip) => {
   }
 
   const tx = await chain.prepareUserTx(address, ops);
-  const ref = rememberPrepared(tx.id, address);
+  const ref = rememberPrepared(tx.id, address, meta);
   return { ok: true, ref, tx };
 };
 
@@ -414,8 +501,9 @@ api.submit = async (body, ip) => {
   if (!known || known.expires < Date.now()) throw httpError(400, 'this prepared transaction expired — start again');
   PREPARED.delete(String(ref));
   if (rateLimited('submit:ip:' + ip, 40, 3600000)) throw httpError(429, 'too many transactions — slow down a moment');
-  if (DEMO) return { ok: true, demo: true, txid: demoTxid() };
+  if (DEMO) { applyConfirmed(known.meta); return { ok: true, demo: true, txid: demoTxid() }; }
   const txid = await chain.submitCosigned(transaction, known.id, known.address);
+  applyConfirmed(known.meta);
   return { ok: true, txid, explorer: explorerTx(txid) };
 };
 
@@ -549,7 +637,12 @@ const server = http.createServer(async (req, res) => {
     return serveStatic(req, res, pathname);
   } catch (e) {
     const status = e.status || 500;
-    if (status >= 500) console.error(`[${new Date().toISOString()}]`, req.method, pathname, e);
+    /* 503 (budget/mana "come back later") and 429 are expected, not
+       faults — log only genuine 500s, and log the message, never the whole
+       Error object (which could carry attached context). */
+    if (status >= 500 && status !== 503) {
+      console.error(`[${new Date().toISOString()}]`, req.method, pathname, '-', String(e && e.message || e).slice(0, 300));
+    }
     res.writeHead(status, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: String(e.message || e).slice(0, 300) }));
   }

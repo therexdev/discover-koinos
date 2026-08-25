@@ -348,14 +348,18 @@ async function devTx(ops) {
     transaction spends, and borrowing the busy dev nonce loses races. */
 async function sendAsAccount(key, ops, { rcLimit = K.rcLimit } = {}) {
   key.provider = provider();
-  const tx = new Transaction({
-    signer: key, provider: provider(),
-    options: { payer: devAddress(), payee: key.getAddress(), rcLimit },
-  });
-  for (const op of ops) await tx.pushOperation(op);
-  await tx.prepare();
-  await tx.sign();
+  /* prepare() reads the PAYEE's nonce — and for playground mints the payee
+     is the ONE shared collection account. Do the nonce read + sign + send
+     all INSIDE the queue, or two concurrent mints read the same nonce and
+     the second is rejected as a duplicate (devTx honors this same rule). */
   return queueTx(async () => {
+    const tx = new Transaction({
+      signer: key, provider: provider(),
+      options: { payer: devAddress(), payee: key.getAddress(), rcLimit },
+    });
+    for (const op of ops) await tx.pushOperation(op);
+    await tx.prepare();
+    await tx.sign();
     await devSigner().signTransaction(tx.transaction);
     const send = new Transaction({ provider: provider() });
     send.transaction = tx.transaction;
@@ -427,42 +431,73 @@ async function mintNft(to, tokenIdHex, metadataJson) {
   return sendAsAccount(key, ops);
 }
 
-/** Launch a fresh token for `spec.owner` — no visitor signature.
-    Two transactions: upload the audited bytecode to a fresh account,
-    then initialize (a contract must exist before it can be called).
-    Returns { address, wif, uploadTx, initTx }. The caller stores the
-    wif server-side as the upgrade authority; it is never sent to the
-    browser. */
-async function launchToken(spec, wasmBuffer) {
+/** A fresh Koinos account for a launch: { key, address, wif }. The caller
+    persists the wif (the token's upgrade authority) BEFORE any on-chain
+    work, so a half-completed launch never strands an un-recorded key. */
+function newAccount() {
   const key = new Signer({ privateKey: crypto.randomBytes(32).toString('hex') });
+  key.provider = provider();
+  return { key, address: key.getAddress(), wif: key.getPrivateKey('wif', true) };
+}
+
+/** Is this launched token already initialized on-chain? A read, so it
+    tells a timed-out-but-mined initialize apart from a real failure. */
+async function tokenInitialized(address) {
+  try {
+    const { result } = await tokenContractAt(address).functions.get_config({});
+    return !!(result && result.initialized);
+  } catch (_) { return false; }
+}
+
+/** Launch a fresh token for `spec.owner` — no visitor signature.
+    Two transactions: upload the audited bytecode to `key`'s account, then
+    initialize (a contract must exist before it can be called). The key is
+    minted and persisted by the caller (see newAccount) and passed in, so
+    this function never handles or throws the secret. Returns
+    { address, uploadTx, initTx }. */
+async function launchToken(spec, wasmBuffer, key) {
+  key.provider = provider();
   const address = key.getAddress();
 
-  const uploadTx = await sendAsAccount(key, [
-    await opUploadContract(address, wasmBuffer),
-  ], { rcLimit: K.rcLimitUpload });
+  let uploadTx = null;
+  try {
+    uploadTx = await sendAsAccount(key, [
+      await opUploadContract(address, wasmBuffer),
+    ], { rcLimit: K.rcLimitUpload });
+  } catch (e) {
+    /* A wait-timeout may still have mined. Only give up if the contract
+       genuinely isn't there — otherwise fall through to initialize. */
+    if (!e.broadcast) throw e;
+    uploadTx = e.txId || null;
+  }
 
   /* Initialize as a SEPARATE transaction, retried: right after a big
      upload the node's resource view can be stale and reject the next
-     transaction spuriously. */
+     transaction spuriously. A retry after a timed-out-but-mined attempt
+     would hit the contract's own "already set up" guard, so treat an
+     on-chain initialized flag (or that message) as success. */
   let initTx = null, lastErr = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt) await new Promise(r => setTimeout(r, 4000));
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt) await new Promise(r => setTimeout(r, 4000 + attempt * 2000));
+    if (await tokenInitialized(address)) { initTx = initTx || 'confirmed'; lastErr = null; break; }
     try {
-      initTx = await sendAsAccount(key, [
-        await opTokenInitialize(address, spec),
-      ]);
+      initTx = await sendAsAccount(key, [await opTokenInitialize(address, spec)]);
       lastErr = null;
       break;
-    } catch (e) { lastErr = e; }
+    } catch (e) {
+      lastErr = e;
+      if (/already been set up/i.test(String(e.message || e))) { initTx = initTx || 'confirmed'; lastErr = null; break; }
+      // e.broadcast (timed out) → next loop re-checks tokenInitialized
+    }
   }
   if (lastErr) {
+    // No secret on the error: the caller already persisted the key.
     const err = new Error(`token deployed at ${address} but initialize failed: ${lastErr.message || lastErr}`);
     err.address = address;
-    err.wif = key.getPrivateKey('wif', true);
     err.uploadTx = uploadTx;
     throw err;
   }
-  return { address, wif: key.getPrivateKey('wif', true), uploadTx, initTx };
+  return { address, uploadTx, initTx };
 }
 
 /* ---------------- auth ---------------- */
@@ -497,7 +532,7 @@ module.exports = {
   opKoinTransfer, opNftMint, opNftSetMetadata, opNftTransfer,
   opTokenTransfer, opTokenMint, opTokenBurn, opUploadContract, opTokenInitialize,
   devTx, sendAsAccount, prepareUserTx, submitCosigned, queueTx,
-  mintNft, launchToken,
+  mintNft, launchToken, newAccount, tokenInitialized,
   verifyAuthSignature, codeToTokenId, tokenIdToCode,
   COLLECTION_ABI, TOKEN_ABI, KOIN_ABI,
 };

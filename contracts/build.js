@@ -38,8 +38,13 @@ const prebuilt = path.join(__dirname, 'prebuilt', name);
 fs.mkdirSync(prebuilt, { recursive: true });
 fs.copyFileSync(path.join(dir, 'build', 'release', 'contract.wasm'), path.join(prebuilt, 'contract.wasm'));
 const abiSrc = path.join(dir, 'build', `${name === 'token' ? 'launchpadtoken' : name}-abi.json`);
-const abiCandidates = fs.readdirSync(path.join(dir, 'build')).filter(f => f.endsWith('-abi.json'));
-const abi = fs.existsSync(abiSrc) ? abiSrc : path.join(dir, 'build', abiCandidates[0]);
+let abi = abiSrc;
+if (!fs.existsSync(abi)) {
+  const abiCandidates = fs.readdirSync(path.join(dir, 'build')).filter(f => f.endsWith('-abi.json')).sort();
+  if (!abiCandidates.length) throw new Error(`no *-abi.json produced in ${path.join(dir, 'build')}`);
+  abi = path.join(dir, 'build', abiCandidates[0]);
+  console.log(`abi:      falling back to ${abiCandidates[0]}`);
+}
 fs.copyFileSync(abi, path.join(prebuilt, 'abi.json'));
 fs.copyFileSync(abi, path.join(__dirname, '..', 'server-abi', 'token-abi.json'));
 console.log(`published: ${prebuilt}/contract.wasm + abi.json, server-abi/token-abi.json`);

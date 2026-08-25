@@ -1,10 +1,15 @@
 /* Token Lab page: launch, personal holdings, transfer/mint/burn, community. */
 'use strict';
 
-(async () => {
+(() => {
   const { $, toast, statusStepper, txLink, escapeHtml } = UI;
-  const cfg = await UI.initHeader().catch(() => null);
-  const explorer = cfg && cfg.explorer;
+  /* Don't gate button wiring on the config fetch; set the explorer base
+     once it lands and repaint the tables. */
+  let explorer = null;
+  UI.initHeader().then((cfg) => {
+    explorer = cfg && cfg.explorer;
+    if (explorer) { loadMine(); loadCommunity(); }
+  }).catch(() => {});
 
   const addrLink = (a) => explorer
     ? `<a class="mono" href="${escapeHtml(explorer)}/address/${escapeHtml(a)}" target="_blank" rel="noopener">${UI.short(a)}</a>`
@@ -58,11 +63,15 @@
     const symbol = $('#tok-symbol').value.trim().toUpperCase();
     const supply = $('#tok-supply').value.trim();
     const decimals = parseInt($('#tok-decimals').value, 10);
+    const mintable = $('#tok-mintable').checked;
     if (!name) { toast('Name your token first', 'err'); $('#tok-name').focus(); return; }
     if (!/^[A-Z0-9]{2,16}$/.test(symbol)) { toast('Symbol: 2–16 letters or digits', 'err'); $('#tok-symbol').focus(); return; }
-    if (!/^\d+(\.\d+)?$/.test(supply) || Number(supply) <= 0) { toast('Supply must be a positive number', 'err'); $('#tok-supply').focus(); return; }
+    if (!/^\d+(\.\d+)?$/.test(supply) || (Number(supply) <= 0 && !mintable)) {
+      toast(mintable ? 'Supply must be a number (0 is fine for a mintable token)' : 'Supply must be a positive number', 'err');
+      $('#tok-supply').focus(); return;
+    }
     if (!Number.isInteger(decimals) || decimals < 0 || decimals > 12) { toast('Decimals must be 0–12', 'err'); return; }
-    UI.ensureAccount();
+    try { UI.ensureAccount(); } catch (_) { return; }
     btn.disabled = true;
     const st = statusStepper($('#tok-status'), [
       'Signing with your key — locally, silently',
@@ -73,7 +82,7 @@
       st.next();
       const proof = await Wallet.proof('launch-token');
       st.next();
-      const r = await Api.launchToken({ ...proof, name, symbol, supply, decimals, mintable: $('#tok-mintable').checked });
+      const r = await Api.launchToken({ ...proof, name, symbol, supply, decimals, mintable });
       st.next();
       st.done(
         `<div class="txline">contract: ${r.explorer ? `<a href="${escapeHtml(r.explorer)}" target="_blank" rel="noopener">${escapeHtml(r.address)}</a>` : escapeHtml(r.address)}</div>`
