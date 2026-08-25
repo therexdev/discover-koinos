@@ -13,7 +13,15 @@ function initNftUpload(root, { onMinted } = {}) {
   const nameInput = el('name'), nameLabel = el('name-label'), batchHint = el('batch-hint');
   const statusEl = el('status'), mintBtn = el('mint');
 
-  let files = [];   // [{dataUrl}]
+  /* Each slot is reserved SYNCHRONOUSLY (so the 10-cap and total-size cap
+     hold even for a single big drop) and its dataUrl fills in when its
+     FileReader resolves — order is preserved, and the mint button waits
+     for every slot to finish. */
+  let files = [];   // [{ dataUrl: string|null, name }]
+  const MAX_FILES = 10;
+  const MAX_BATCH = 15 * 1024 * 1024;   // headroom under the server's body cap
+  const pending = () => files.filter(f => f.dataUrl === null).length;
+  const batchBytes = () => files.reduce((n, f) => n + (f.dataUrl ? f.dataUrl.length : 0), 0);
 
   function paintThumbs() {
     if (!files.length) {
@@ -23,21 +31,30 @@ function initNftUpload(root, { onMinted } = {}) {
     }
     dzEmpty.hidden = true; thumbs.hidden = false;
     thumbs.innerHTML = files.map((f, i) =>
-      `<span class="thumb"><img src="${f.dataUrl}" alt=""><button type="button" data-rm="${i}" aria-label="Remove image ${i + 1}">✕</button></span>`
-    ).join('') + (files.length < 10 ? '<span class="thumb add" title="Add more">＋</span>' : '');
+      `<span class="thumb">${f.dataUrl ? `<img src="${f.dataUrl}" alt="">` : '<span class="thumb-loading" aria-label="loading">⏳</span>'}<button type="button" data-rm="${i}" aria-label="Remove image ${i + 1}">✕</button></span>`
+    ).join('') + (files.length < MAX_FILES ? '<span class="thumb add" title="Add more">＋</span>' : '');
     nameLabel.textContent = files.length > 1 ? `Base name (× ${files.length})` : 'NFT name';
     batchHint.hidden = files.length <= 1;
   }
 
   function acceptFiles(list) {
-    const incoming = [...list];
-    for (const file of incoming) {
-      if (files.length >= 10) { toast('Up to 10 images per mint', 'err'); break; }
+    for (const file of [...list]) {
+      if (files.length >= MAX_FILES) { toast('Up to 10 images per mint', 'err'); break; }
       if (!/^image\/(png|jpe?g|gif|webp)$/.test(file.type)) { toast(`"${file.name}": use PNG, JPEG, GIF or WebP`, 'err'); continue; }
       if (file.size > 3 * 1024 * 1024) { toast(`"${file.name}" is over 3MB — pick a smaller one`, 'err'); continue; }
+      const slot = { dataUrl: null, name: file.name };   // reserve the slot now
+      files.push(slot); paintThumbs();
       const reader = new FileReader();
-      reader.onload = () => { files.push({ dataUrl: reader.result }); paintThumbs(); };
-      reader.onerror = () => toast(`Could not read "${file.name}"`, 'err');
+      reader.onload = () => {
+        // Enforce the aggregate cap once the encoded size is known.
+        if (batchBytes() + reader.result.length > MAX_BATCH) {
+          files.splice(files.indexOf(slot), 1); paintThumbs();
+          toast(`Batch too big with "${file.name}" — remove one or use smaller images`, 'err');
+          return;
+        }
+        slot.dataUrl = reader.result; paintThumbs();
+      };
+      reader.onerror = () => { files.splice(files.indexOf(slot), 1); paintThumbs(); toast(`Could not read "${file.name}"`, 'err'); };
       reader.readAsDataURL(file);
     }
   }
@@ -47,7 +64,10 @@ function initNftUpload(root, { onMinted } = {}) {
     if (rm) { files.splice(Number(rm.dataset.rm), 1); paintThumbs(); return; }
     fileInput.click();
   });
-  dz.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
+  dz.addEventListener('keydown', (e) => {
+    // Only the dropzone itself opens the picker — not the ✕ / ＋ buttons inside it.
+    if ((e.key === 'Enter' || e.key === ' ') && e.target === dz) { e.preventDefault(); fileInput.click(); }
+  });
   fileInput.addEventListener('change', () => { acceptFiles(fileInput.files); fileInput.value = ''; });
   ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('drag'); }));
   ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('drag'); }));
@@ -76,6 +96,7 @@ function initNftUpload(root, { onMinted } = {}) {
     const isNew = collSelect.value === '__new';
     const cName = collName.value.trim();
     if (!files.length) { toast('Choose at least one image', 'err'); return; }
+    if (pending() > 0) { toast('Still loading images — one moment…', ''); return; }
     if (!name) { toast(files.length > 1 ? 'Give the batch a base name' : 'Name your NFT', 'err'); nameInput.focus(); return; }
     if (isNew && !cName) { toast('Name your new collection', 'err'); collName.focus(); return; }
     try { UI.ensureAccount(); } catch (_) { return; }

@@ -43,7 +43,7 @@ const Share = (() => {
       <div style="text-align:right;margin-top:12px"><button class="btn ghost small" id="share-close">Not now</button></div>`;
     document.body.appendChild(d);
     modal = d;
-    $('#share-close', d).addEventListener('click', () => d.close());
+    $('#share-close', d).addEventListener('click', () => closeModal(d));
     $('#share-text', d).addEventListener('input', syncTargets);
     $('#share-copy', d).addEventListener('click', async () => {
       await copyText($('#share-text', d).value);
@@ -84,6 +84,11 @@ const Share = (() => {
     $('#share-text', d).value = (TEMPLATES[kind] || TEMPLATES.site)({ ...data, url });
     syncTargets();
     if (typeof d.showModal === 'function') { if (!d.open) d.showModal(); } else d.setAttribute('open', '');
+  }
+
+  function closeModal(d) {
+    if (typeof d.close === 'function') { try { d.close(); return; } catch (_) {} }
+    d.removeAttribute('open');
   }
 
   /** The success beat: confetti now, share modal a breath later — long

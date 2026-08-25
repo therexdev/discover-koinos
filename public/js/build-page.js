@@ -15,6 +15,10 @@
     const wallet = $('#yours-wallet'), mana = $('#yours-mana'), nft = $('#yours-nft'), token = $('#yours-token');
     if (!wallet) return;
 
+    // Reset every data section first, so a logout or a failed load never
+    // leaves the previous account's things showing as "Yours".
+    for (const el of [mana, nft, token]) if (el) { el.hidden = true; el.innerHTML = ''; }
+
     if (!addr) {
       wallet.hidden = false;
       wallet.innerHTML = `<div class="yours-k">Yours</div><p class="not-yet">You haven't made an account yet — <a href="/">one click on the home page</a> and this page fills in with your own things.</p>`;

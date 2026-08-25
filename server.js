@@ -256,12 +256,24 @@ function storeUpload(buf, ext) {
   fs.writeFileSync(path.join(UPLOAD_DIR, id), buf);
   return id;
 }
+/* The gateway's own origin. PUBLIC_ORIGIN is authoritative; without it we
+   derive from the request but VALIDATE — an attacker-controlled Host must
+   never be reflected verbatim into HTML, a redirect Location, or on-chain
+   metadata. Only a bare hostname[:port] and http/https survive, so a forged
+   header can neither break out of an attribute nor become a full URL. */
 function originFor(req) {
   if (CFG.publicOrigin) return CFG.publicOrigin.replace(/\/+$/, '');
-  const proto = (req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
-  const host = req.headers['host'] || `localhost:${CFG.port}`;
+  const rawProto = String((req.headers['x-forwarded-proto'] || 'http')).split(',')[0].trim().toLowerCase();
+  const proto = rawProto === 'https' ? 'https' : 'http';
+  const rawHost = String(req.headers['host'] || '').split(',')[0].trim();
+  const host = /^[a-z0-9.-]{1,253}(:\d{1,5})?$/i.test(rawHost) ? rawHost : `localhost:${CFG.port}`;
   return `${proto}://${host}`;
 }
+/* Absolutize a stored image reference. Uploads are stored as an
+   origin-agnostic PATH ("/uploads/…") so they survive a domain change and
+   can never be a poisoned absolute URL; paint NFTs store a data: URL. */
+const absImage = (image, origin) =>
+  (image && image.startsWith('/')) ? origin + image : String(image || '');
 const symbolFrom = (name) => (String(name).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) || 'DK') ;
 
 /* ---------------- rate limiting ---------------- */
@@ -644,7 +656,7 @@ api.uploadNft = async (body, ip, req) => {
   if (rawImages.length > 10) throw httpError(400, 'up to 10 images per mint');
 
   if (rateLimited('upload:addr:' + address, 8, 24 * 3600000)) throw httpError(429, 'that account has uploaded a lot today — come back tomorrow');
-  if (rateLimited('upload:ip:' + ip, 15, 24 * 3600000)) throw httpError(429, 'too many uploads from this connection today');
+  // (per-IP upload cap is enforced in the dispatcher, before the body read)
 
   // Validate EVERY image before touching budgets or the chain.
   const images = rawImages.map((d) => decodeUploadImage(d));
@@ -706,17 +718,20 @@ api.uploadNft = async (body, ip, req) => {
     }
 
     // Store every image, build every mint, then mint the whole batch in
-    // ONE transaction — ten NFTs is one broadcast and one wait.
+    // ONE transaction — ten NFTs is one broadcast and one wait. The image
+    // is kept as an origin-agnostic PATH; only the on-chain metadata needs
+    // an absolute URL, which uses the gateway's OWN (validated) origin so a
+    // forged Host can never be baked into the immutable record.
     const origin = originFor(req);
+    const metaOrigin = CFG.publicOrigin ? CFG.publicOrigin.replace(/\/+$/, '') : origin;
     const items = images.map((img, i) => {
       const fileId = storeUpload(img.buf, img.ext);
-      const imageUrl = origin + '/uploads/' + fileId;
+      const imagePath = '/uploads/' + fileId;
       const name = images.length > 1 ? `${nftName} #${i + 1}` : nftName;
       const code = coll.symbol + '-' + seqs[i];
-      return {
-        code, tokenId: chain.codeToTokenId(code), name, imageUrl, mime: img.mime,
-        metadata: JSON.stringify({ name, image: imageUrl, description: `Minted at Discover Koinos by ${address}` }),
-      };
+      const metadata = JSON.stringify({ name, image: metaOrigin + imagePath, description: `Minted at Discover Koinos by ${address}` });
+      if (metadata.length > 8192) throw httpError(400, 'that name is too long to store on-chain');
+      return { code, tokenId: chain.codeToTokenId(code), name, imagePath, mime: img.mime, metadata };
     });
 
     let txid;
@@ -732,7 +747,7 @@ api.uploadNft = async (body, ip, req) => {
 
     const isDemo = (DEMO || coll.demo) || undefined;
     const recs = items.map(it => ({
-      code: it.code, tokenId: it.tokenId, name: it.name, image: it.imageUrl, mime: it.mime,
+      code: it.code, tokenId: it.tokenId, name: it.name, image: it.imagePath, mime: it.mime,
       collection: coll.address, collectionName: coll.name,
       owner: address, txid, ts: Date.now(), demo: isDemo,
     }));
@@ -943,12 +958,14 @@ function sharePageNft(req, res, code) {
   const origin = originFor(req);
   const ogImage = rec.art
     ? `${origin}/og/nft/${encodeURIComponent(rec.code)}.png`
-    : (/^https?:\/\//.test(rec.image) ? rec.image : `${origin}/assets/og-card.png`);
-  const title = `"${rec.name}" — minted free on Koinos`;
-  const desc = 'Made in a browser with no wallet setup, no gas fees and no technical experience — a real on-chain NFT. Make yours in under a minute, free.';
+    : (rec.image && rec.image.startsWith('/') ? origin + rec.image : `${origin}/assets/og-card.png`);
+  const title = `"${rec.name}" — minted free on Koinos${rec.demo ? ' (demo)' : ''}`;
+  const desc = rec.demo
+    ? 'A demo of Discover Koinos — mint a real NFT in a browser with no wallet, no gas and no signup. Try it free.'
+    : 'Made in a browser with no wallet setup, no gas fees and no technical experience — a real on-chain NFT. Make yours in under a minute, free.';
   const body = `
     <div style="text-align:center">
-      <img src="${esc(rec.image)}" alt="${esc(rec.name)}" style="width:min(380px,80vw);aspect-ratio:1;image-rendering:pixelated;border-radius:14px;border:1px solid var(--line-strong);background:var(--bg-inset)">
+      <img src="${esc(absImage(rec.image, origin))}" alt="${esc(rec.name)}" style="width:min(380px,80vw);aspect-ratio:1;image-rendering:pixelated;border-radius:14px;border:1px solid var(--line-strong);background:var(--bg-inset)">
       <h1 style="margin-top:22px">${esc(rec.name)}</h1>
       <p class="sub" style="color:var(--text-dim)">
         A real on-chain NFT in <strong>${esc(rec.collectionName || 'a Koinos collection')}</strong>,
@@ -968,8 +985,10 @@ function sharePageToken(req, res, addr) {
   const rec = registry.tokens.find(t => t.address === addr);
   if (!rec) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('no such token'); }
   const origin = originFor(req);
-  const title = `$${rec.symbol} — a token launched free on Koinos`;
-  const desc = `"${rec.name}" ($${rec.symbol}) — a real KCS-4 token contract, deployed from a browser with no wallet, no fees and no technical experience. Launch yours in one click, free.`;
+  const title = `$${rec.symbol} — a token launched free on Koinos${rec.demo ? ' (demo)' : ''}`;
+  const desc = rec.demo
+    ? `A demo of Discover Koinos — launch a real KCS-4 token in one click, no wallet, no fees, no signup. Try it free.`
+    : `"${rec.name}" ($${rec.symbol}) — a real KCS-4 token contract, deployed from a browser with no wallet, no fees and no technical experience. Launch yours in one click, free.`;
   const body = `
     <div style="text-align:center">
       <div style="font-family:var(--font-head);font-weight:800;font-size:clamp(3rem,10vw,5rem);color:var(--accent-soft);letter-spacing:-.02em">$${esc(rec.symbol)}</div>
@@ -998,8 +1017,12 @@ function serveNftOg(req, res, code) {
   const rec = registry.nfts.find(n => n.code === code);
   if (!rec) { res.writeHead(404); return res.end(); }
   if (!rec.art) {
-    // uploaded NFT: the stored raster IS the card
-    const loc = /^https?:\/\//.test(rec.image) ? rec.image : originFor(req) + '/assets/og-card.png';
+    /* Uploaded NFT: the stored raster is the card. Redirect ONLY to our own
+       /uploads path — never forward to an arbitrary stored URL (that would
+       make this trusted endpoint an open redirect). */
+    const loc = (rec.image && rec.image.startsWith('/uploads/'))
+      ? originFor(req) + rec.image
+      : originFor(req) + '/assets/og-card.png';
     res.writeHead(302, { Location: loc });
     return res.end();
   }
@@ -1007,7 +1030,8 @@ function serveNftOg(req, res, code) {
   if (!png) {
     try { png = nftCardPng(rec.art.palette, rec.art.cells); }
     catch (_) { res.writeHead(500); return res.end(); }
-    if (OG_CACHE.size > 500) OG_CACHE.clear();
+    // Evict the oldest entry rather than flushing the whole cache.
+    if (OG_CACHE.size >= 500) OG_CACHE.delete(OG_CACHE.keys().next().value);
     OG_CACHE.set(code, png);
   }
   res.writeHead(200, {
@@ -1190,9 +1214,15 @@ const server = http.createServer(async (req, res) => {
         out = await GET_ROUTES[pathname](url.searchParams);
       } else if (req.method === 'POST' && POST_ROUTES[pathname]) {
         if (rateLimited('api:ip:' + clientIp(req), 240, 60000)) throw httpError(429, 'slow down');
-        // The upload route carries base64 images (up to 10 per batch);
-        // everyone else is tiny. 16MB bounds the JSON parse.
-        const cap = pathname === '/api/upload-nft' ? 16 * 1024 * 1024 : 128 * 1024;
+        // Everyone is tiny EXCEPT the upload route (up to 10 base64 images).
+        // Gate the big read behind the per-IP daily upload cap BEFORE
+        // buffering, so an unauthenticated flood can't OOM us pre-auth; and
+        // size the cap to the real 10×maxUploadBytes batch (base64 overhead).
+        let cap = 128 * 1024;
+        if (pathname === '/api/upload-nft') {
+          if (rateLimited('upload:ip:' + clientIp(req), 15, 24 * 3600000)) throw httpError(429, 'too many uploads from this connection today');
+          cap = Math.ceil(CFG.maxUploadBytes * 10 * 4 / 3) + 64 * 1024;
+        }
         const body = await readBody(req, cap);
         out = await POST_ROUTES[pathname](body, clientIp(req), req);
       } else {

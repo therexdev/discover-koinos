@@ -106,7 +106,7 @@
     } catch (e) { st.fail(e.message); } finally { btn.disabled = false; }
   });
 
-  document.addEventListener('dk:account', () => { loadMine(); loadCollections(); });
+  document.addEventListener('dk:account', loadMine);   // the widget refreshes its own collection list
   loadMine();
   loadCommunity();
 })();
