@@ -319,6 +319,17 @@ a.nft:hover { border-color: var(--accent); transform: translateY(-2px); }
 .gallery .nft .by { font-family: var(--font-mono); font-size: .68rem; color: var(--text-dim); }
 .gallery .nft .on-ouro { font-size: .64rem; font-weight: 800; letter-spacing: .05em; color: var(--accent-soft); vertical-align: 1px; }
 
+/* Inline DEX-listing form, mounted in the launch success box. */
+.dex-inline {
+  margin-top: 14px; padding: 14px 14px 16px; text-align: left;
+  background: var(--bg-inset); border: 1px solid var(--line-strong); border-radius: 12px;
+}
+.dex-inline .dex-head { margin-bottom: 10px; font-size: .95rem; }
+.dex-inline .dex-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 560px) { .dex-inline .dex-row { grid-template-columns: 1fr; } }
+.dex-inline .btn { width: 100%; margin-top: 6px; }
+.dex-inline .status { margin: 8px 0 0; }
+
 /* The homepage activity strip: fresh tokens, DEX listings, collections. */
 .feed-strip { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; justify-content: center; }
 .feed-chip {

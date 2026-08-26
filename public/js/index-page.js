@@ -134,9 +134,13 @@
       st.done(
         `<div class="txline">contract: ${r.explorer ? `<a href="${escapeHtml(r.explorer)}" target="_blank" rel="noopener">${escapeHtml(r.address)}</a>` : escapeHtml(r.address)}</div>`
         + txLink(r.txid, r.explorerTx, r.demo)
-        + (cfg && cfg.dex && cfg.dex.available
-          ? `<div class="txline">next: <a href="/token#list=${encodeURIComponent(r.address)}">📈 list $${escapeHtml(symbol)} on Trade Koinos — free →</a></div>` : '')
       );
+      // The obvious next step, right in the success box: list it on the DEX.
+      if (cfg && cfg.dex && cfg.dex.available) {
+        const dexMount = document.createElement('div');
+        $('#tok-status').appendChild(dexMount);
+        DexList.mount(dexMount, { token: r.address, symbol });
+      }
       UI.markDone('token');
       toast(`${symbol} is live — ${r.supply} in your wallet`, 'ok');
       Share.celebrate('token', { url: r.shareUrl, symbol });

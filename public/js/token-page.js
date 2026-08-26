@@ -27,8 +27,10 @@
             <td><span class="sym">${escapeHtml(t.symbol)}</span> ${escapeHtml(t.name)}</td>
             <td>${escapeHtml(fmtUnits(t.balance ?? t.supplyUnits, t.decimals))}</td>
             <td>${addrLink(t.address)}</td>
-            <td>${t.dex && t.dexUrl
-              ? `<a class="btn ghost small" href="${escapeHtml(t.dexUrl)}" target="_blank" rel="noopener" title="Its live KOIN pair on Trade Koinos">Trade ↗</a>`
+            <td>${t.dex
+              ? (t.dexUrl
+                ? `<a class="btn ghost small" href="${escapeHtml(t.dexUrl)}" target="_blank" rel="noopener" title="Its live KOIN pair on Trade Koinos">Trade ↗</a>`
+                : '<span class="hint">Listed ✓</span>')
               : (dexAvailable ? `<a class="btn ghost small" href="#list=${encodeURIComponent(t.address)}" title="Create the KOIN pair on Trade Koinos — free">📈 List</a>` : '')}</td>
           </tr>`).join('');
       }
@@ -111,8 +113,13 @@
       st.done(
         `<div class="txline">contract: ${r.explorer ? `<a href="${escapeHtml(r.explorer)}" target="_blank" rel="noopener">${escapeHtml(r.address)}</a>` : escapeHtml(r.address)}</div>`
         + txLink(r.txid, r.explorerTx, r.demo)
-        + (dexAvailable ? `<div class="txline">next: <a href="#list=${encodeURIComponent(r.address)}">📈 list $${escapeHtml(symbol)} on Trade Koinos — free →</a></div>` : '')
       );
+      // The obvious next step, right in the success box: list it on the DEX.
+      if (dexAvailable) {
+        const dexMount = document.createElement('div');
+        $('#tok-status').appendChild(dexMount);
+        DexList.mount(dexMount, { token: r.address, symbol, onListed: () => loadMine() });
+      }
       UI.markDone('token');
       toast(`${symbol} is live — ${r.supply} in your wallet`, 'ok');
       Share.celebrate('token', { url: r.shareUrl, symbol });
