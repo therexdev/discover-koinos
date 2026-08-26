@@ -100,6 +100,7 @@ node server.js
 | `MAX_COLLECTIONS_PER_DAY` | `10` | global daily Upload-collection deploy budget |
 | `MAX_UPLOAD_BYTES` | `3145728` | max uploaded NFT image size (3MB) |
 | `PUBLIC_ORIGIN` | *(derived)* | canonical https origin — used for uploaded-image URLs and the X callback |
+| `DATA_DIR` | `./data` | where records, keys and uploads live — **point it OUTSIDE the deploy directory** on hosts that wipe the app folder on redeploy (the server also self-heals from the chain, but images can't be rebuilt) |
 | `DEMO_MODE` | — | `1` forces demo mode |
 | **Social login** | | *(all optional; Local Wallet + Import always work)* |
 | `GOOGLE_CLIENT_ID` | *(inherited)* | **Aurvania's** Google OAuth client ID (`…apps.googleusercontent.com`). Enables the Google button, which opens the **same wallet as Aurvania & OURO**. Leave unset to inherit it from Aurvania at boot. No `LOGIN_SECRET` needed — Google is bridged, not custodied here |
@@ -113,6 +114,7 @@ node server.js
 | `OURO_ADMIN_KEY` | — | optional — lifts OURO's 10-registrations/day/IP limit |
 | `AUTO_LIST_OURO` | `1` | set `0` to stop auto-registering collections on OURO |
 | `DEX_ORDERBOOK_ADDR` | mainnet orderbook | Trade Koinos orderbook contract (mainnet only) |
+| `TRADE_APP_URL` | `https://app.tradekoinos.com` | the Trade Koinos web app — pair links point at `#/market/<token>_<KOIN>` there |
 
 ### The mana budget, honestly
 

@@ -4,7 +4,11 @@
 
 (async () => {
   const { $, toast, statusStepper, txLink, escapeHtml } = UI;
-  UI.initHeader();
+  UI.initHeader().then((cfg) => {
+    // The shared Paint collection's live marketplace page.
+    const a = $('#paint-ouro-link');
+    if (a && cfg && cfg.paintOuroUrl) { a.href = cfg.paintOuroUrl; a.hidden = false; }
+  }).catch(() => {});
 
   /* ---------------- tabs ---------------- */
   const tabs = [['tab-paint', 'pane-paint'], ['tab-upload', 'pane-upload']];
@@ -37,7 +41,8 @@
       const proof = await Wallet.proof('mint-nft');
       st.next(); st.next();
       const r = await Api.mintNft({ ...proof, name, palette: studio.palette(), cells: studio.grid() });
-      st.done(txLink(r.txid, r.explorer, r.demo));
+      st.done(txLink(r.txid, r.explorer, r.demo)
+        + (r.ouroUrl ? `<div class="txline">on the marketplace: <a href="${escapeHtml(r.ouroUrl)}" target="_blank" rel="noopener">view it on OURO ↗</a></div>` : ''));
       UI.markDone('nft');
       toast(`"${name}" minted — ${r.code}`, 'ok');
       Share.celebrate('nft', { url: r.shareUrl, name, image: r.image });
@@ -59,11 +64,11 @@
       const host = $('#my-gallery');
       if (a.nfts.length) {
         host.innerHTML = a.nfts.slice().reverse().map(n => `
-          <div class="nft">
+          <a class="nft" href="${escapeHtml(n.ouroUrl || ('/n/' + encodeURIComponent(n.code || '')))}" target="_blank" rel="noopener" title="${n.ouroUrl ? 'View on OURO' : 'View'}">
             <img src="${escapeHtml(n.image)}" alt="${escapeHtml(n.name)}" loading="lazy">
-            <div class="nm">${escapeHtml(n.name)}</div>
+            <div class="nm">${escapeHtml(n.name)}${n.ouroUrl ? ' <span class="on-ouro">OURO ↗</span>' : ''}</div>
             <div class="by">${escapeHtml(n.collectionName || n.code || '')}</div>
-          </div>`).join('');
+          </a>`).join('');
       }
       const sel = $('#send-select');
       sel.innerHTML = '<option value="">— pick one you own —</option>' +
@@ -76,11 +81,11 @@
       const g = await Api.gallery();
       const host = $('#community-gallery');
       host.innerHTML = g.nfts.length ? g.nfts.map(n => `
-        <div class="nft">
+        <a class="nft" href="${escapeHtml(n.ouroUrl || ('/n/' + encodeURIComponent(n.code || '')))}" target="_blank" rel="noopener" title="${n.ouroUrl ? 'View on OURO' : 'View'}">
           <img src="${escapeHtml(n.image)}" alt="${escapeHtml(n.name)}" loading="lazy">
-          <div class="nm">${escapeHtml(n.name)}</div>
+          <div class="nm">${escapeHtml(n.name)}${n.ouroUrl ? ' <span class="on-ouro">OURO ↗</span>' : ''}</div>
           <div class="by">${escapeHtml(n.collectionName || n.code || '')} · ${UI.short(n.owner)}</div>
-        </div>`).join('')
+        </a>`).join('')
         : '<p class="sub">Nothing here yet — yours could be the first.</p>';
     } catch (_) {}
   }

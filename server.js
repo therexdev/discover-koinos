@@ -26,7 +26,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const chain = require('./tools/koinos');
-const { pickRpc, NETWORKS } = require('./tools/rpc');
+const { pickRpcs, NETWORKS } = require('./tools/rpc');
 const { nftCardPng } = require('./tools/png');
 
 /* ---------------- configuration ---------------- */
@@ -78,6 +78,7 @@ const CFG = {
   /* Trade Koinos orderbook DEX — mainnet only; no testnet deployment. */
   dexOrderbook: process.env.DEX_ORDERBOOK_ADDR ||
     ((process.env.KOINOS_NETWORK || 'harbinger') === 'mainnet' ? '1Bke72aGbpq4brDY3m1UQxRCGBB9GPTJQz' : ''),
+  tradeAppUrl: (process.env.TRADE_APP_URL || 'https://app.tradekoinos.com').replace(/\/+$/, ''),
 
   /* Uploaded NFT images (the "Upload" path). Stored on the gateway, served
      by URL, referenced from on-chain metadata. */
@@ -85,7 +86,10 @@ const CFG = {
 };
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const DATA_DIR = path.join(__dirname, 'data');
+/* DATA_DIR can live OUTSIDE the deploy directory (env DATA_DIR) — a git
+   redeploy that wipes the app folder must not wipe minted-NFT records,
+   token keys and uploads with it. */
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
 const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const TOKEN_WASM = path.join(__dirname, 'contracts', 'prebuilt', 'token', 'contract.wasm');
 const COLLECTION_WASM = path.join(__dirname, 'contracts', 'prebuilt', 'collection', 'contract.wasm');
@@ -172,6 +176,15 @@ async function registerOnOuro(rec) {
   } catch (_) { return false; }
 }
 const ouroCollectionUrl = (addr) => `${CFG.ouroApiBase}/#/c/${addr}`;
+/* An individual NFT's page on OURO — OURO reads the token straight off the
+   chain, so any minted id in a registered collection resolves. */
+const ouroNftUrl = (collAddr, tokenIdHex) => `${CFG.ouroApiBase}/#/t/${collAddr}/${tokenIdHex}`;
+/* The token's trading-pair page on the Trade Koinos app. The app resolves
+   #/market/<base>_<quote> by contract address (its canonical form). */
+const dexPairUrl = (tokenAddr) =>
+  `${CFG.tradeAppUrl}/#/market/${tokenAddr}_${(NETWORKS[CFG.network] || {}).koinContract || 'KOIN'}`;
+/* Is the shared Paint collection registered on OURO? (set at boot) */
+const paintOuroRec = () => registry.collections.find(c => c.kind === 'paint' && c.address === CFG.collectionAddr);
 
 function dayKey() { return new Date().toISOString().slice(0, 10); }
 function rollDay() {
@@ -361,10 +374,24 @@ function applyConfirmed(meta) {
 }
 
 /** An NFT record as the API shows it — without the raw paint grid (kept
-    only for rendering raster social cards). */
+    only for rendering raster social cards), plus its page on OURO when its
+    collection is registered there (OURO reads tokens off the chain, so any
+    minted id in a registered collection resolves). */
 function pubNft(n) {
   const { art, ...rest } = n;
+  const coll = n.collection && registry.collections.find(c => c.address === n.collection);
+  rest.ouroUrl = coll && coll.ouro && !n.demo ? ouroNftUrl(n.collection, n.tokenId) : null;
   return rest;
+}
+
+/** A token record as the API shows it — with its outbound links: the
+    explorer always, the Trade Koinos pair page once listed on the DEX. */
+function pubToken(t) {
+  return {
+    ...t,
+    explorerUrl: t.demo ? null : explorerAddr(t.address),
+    dexUrl: t.dex && !t.demo ? dexPairUrl(t.address) : null,
+  };
 }
 
 /* ---------------- pixel art -> SVG ----------------
@@ -431,11 +458,14 @@ api.config = async () => {
       name: 'Trade Koinos',
       mainnetOnly: true,
       available: DEMO || (chain.dexEnabled() && !net.testnet),
+      appUrl: CFG.tradeAppUrl,
     },
     ouro: {
       autoList: CFG.autoListOuro && (DEMO || !net.testnet),
       base: CFG.ouroApiBase,
     },
+    /* The Paint collection's page on OURO, once registered there. */
+    paintOuroUrl: (() => { const p = paintOuroRec(); return p && p.ouro ? ouroCollectionUrl(p.address) : null; })(),
     limits: {
       launchesPerDay: CFG.maxLaunchesPerDay,
       mintsPerDay: CFG.maxMintsPerDay,
@@ -483,7 +513,7 @@ api.account = async (params) => {
   if (!chain.isAddr(address)) throw httpError(400, 'a valid Koinos address is required');
   const mine = {
     nfts: registry.nfts.filter(n => n.owner === address).map(pubNft),
-    tokens: registry.tokens.filter(t => t.owner === address),
+    tokens: registry.tokens.filter(t => t.owner === address).map(pubToken),
     collections: myCollections(address).filter(c => c.kind !== 'paint'),
   };
   if (DEMO) {
@@ -514,9 +544,9 @@ api.collections = async (params) => {
 api.gallery = async () => ({
   ok: true,
   nfts: registry.nfts.slice(-24).reverse().map(pubNft),
-  tokens: registry.tokens.slice(-24).reverse(),
-  collections: registry.collections.slice(-24).reverse().map(c => ({
-    address: c.address, name: c.name, symbol: c.symbol, kind: c.kind,
+  tokens: registry.tokens.slice(-24).reverse().map(pubToken),
+  collections: registry.collections.filter(c => c.kind !== 'paint').slice(-24).reverse().map(c => ({
+    address: c.address, name: c.name, symbol: c.symbol, kind: c.kind, ts: c.createdAt,
     ouroUrl: c.ouro ? ouroCollectionUrl(c.address) : null,
   })),
 });
@@ -640,7 +670,7 @@ api.launchToken = async (body, ip, req) => {
   };
   registry.tokens.push(rec); saveTokens();
   return {
-    ok: true, ...rec,
+    ok: true, ...pubToken(rec),
     explorer: DEMO ? null : explorerAddr(address2),
     explorerTx: DEMO ? null : explorerTx(rec.txid),
     shareUrl: originFor(req) + '/t/' + address2,
@@ -764,9 +794,12 @@ api.uploadNft = async (body, ip, req) => {
     registry.nfts.push(...recs); saveNfts();
     const first = recs[0];
     return {
-      ok: true, ...first,
+      ok: true, ...pubNft(first),
       count: recs.length,
-      minted: recs.map(r => ({ code: r.code, name: r.name, image: r.image, shareUrl: origin + '/n/' + r.code })),
+      minted: recs.map(r => ({
+        code: r.code, name: r.name, image: r.image, shareUrl: origin + '/n/' + r.code,
+        ouroUrl: coll.ouro && !isDemo ? ouroNftUrl(coll.address, r.tokenId) : null,
+      })),
       explorer: isDemo ? null : explorerTx(txid),
       collectionOuroUrl: coll.ouro ? ouroCollectionUrl(coll.address) : null,
       createdCollection: createdCollection ? { address: coll.address, name: coll.name, symbol: coll.symbol } : null,
@@ -825,7 +858,12 @@ api.listDex = async (body, ip, req) => {
   const ops = await chain.opsDexSell(rec.address, address, marketId, priceUnits, quantityUnits);
   const tx = await chain.prepareUserTx(address, ops);
   const ref = rememberPrepared(tx.id, address, dexMeta);
-  return { ok: true, ref, tx, marketId, dex: 'Trade Koinos', explorerAddr: explorerAddr(chain.K.dexOrderbook), shareUrl };
+  return {
+    ok: true, ref, tx, marketId, dex: 'Trade Koinos',
+    explorerAddr: explorerAddr(chain.K.dexOrderbook),
+    dexUrl: dexPairUrl(rec.address),   // the pair's page on the Trade Koinos app
+    shareUrl,
+  };
 };
 
 /* Prepared user transactions: the visitor's OWN assets moving, so the
@@ -1269,9 +1307,12 @@ const server = http.createServer(async (req, res) => {
     console.log('mode:     DEMO (set GATEWAY_DEV_WIF to go live)');
   } else if (!DEMO) {
     try {
-      const rpcUrl = await pickRpc(CFG.network);
+      /* The FULL ordered candidate list, not just the first healthy one —
+         koilib's Provider rotates to the next node when one starts
+         answering with garbage mid-flight. */
+      const rpcUrls = await pickRpcs(CFG.network);
       chain.configure({
-        network: CFG.network, rpcs: [rpcUrl],
+        network: CFG.network, rpcs: rpcUrls,
         devWif: CFG.devWif,
         collectionAddr: CFG.collectionAddr, collectionWif: CFG.collectionWif,
         dexOrderbook: CFG.dexOrderbook,
@@ -1283,8 +1324,16 @@ const server = http.createServer(async (req, res) => {
       if (CFG.collectionAddr) {
         try {
           const info = await chain.collectionInfo();
-          console.log(`paint:    ${CFG.collectionAddr} "${info.name || '?'}" (${info.symbol || '?'})`);
-          registerPaintCollection(info);
+          if (/^Uninitialized/.test(info.name || '')) {
+            /* Deployed but never initialized — this is what OURO (and every
+               chain reader) shows as an unnamed collection. The deploy
+               script's initialize step retries safely. */
+            console.log(`paint:    WARNING — ${CFG.collectionAddr} is deployed but NOT initialized (name/symbol unset).`);
+            console.log(`paint:    Fix: KOINOS_NETWORK=${CFG.network} node scripts/deploy-playground.js gateway.env  (idempotent — it will only run the missing initialize)`);
+          } else {
+            console.log(`paint:    ${CFG.collectionAddr} "${info.name || '?'}" (${info.symbol || '?'})`);
+            registerPaintCollection(info);
+          }
         } catch (e) {
           console.log(`paint:    WARNING — collection at ${CFG.collectionAddr} did not answer get_info: ${e.message}`);
         }
@@ -1315,6 +1364,11 @@ const server = http.createServer(async (req, res) => {
   server.listen(CFG.port, () => {
     console.log(`serving:  http://localhost:${CFG.port} ${DEMO ? '(demo mode)' : ''}`);
   });
+
+  /* Heal the registry against the chain in the background — never blocks
+     serving, and a mint recorded on-chain but lost to an RPC hiccup (or a
+     data/ wipe) reappears on the site within a minute of boot. */
+  if (!DEMO) reconcileRegistry().catch((e) => console.log(`heal:     skipped — ${e.message}`));
 })();
 
 /* Ensure the shared Paint collection is in the registry (kind:'paint') and,
@@ -1326,4 +1380,96 @@ function registerPaintCollection(info) {
     registry.collections.push(rec); saveCollections();
   }
   if (!rec.ouro) registerOnOuro({ address: rec.address, name: rec.name }).then((ok) => { if (ok) { rec.ouro = true; saveCollections(); } }).catch(() => {});
+}
+
+/* ---------------- registry ⇄ chain reconciliation ----------------
+   An RPC hiccup mid-launch, or a redeploy that wiped data/, leaves things
+   that EXIST on-chain missing from the registry — a visitor's very real
+   token or NFT simply vanishes from the site. The chain is the source of
+   truth; rebuild what can be rebuilt:
+     · launched tokens — every key held in token-keys.json is checked on-chain
+     · upload collections — same, from collection-keys.json
+     · paint NFTs — the collection's token ids are enumerated and missing
+       ones rebuilt from their on-chain metadata (name + image live on-chain)
+     · the DK sequence counter is bumped past every id seen, so a wiped
+       counters.json can never re-issue a used id ("token already minted") */
+async function reconcileRegistry() {
+  let healed = 0;
+
+  for (const addr of Object.keys(tokenKeys)) {
+    if (registry.tokens.some(t => t.address === addr)) continue;
+    try {
+      const { result: cfg } = await chain.tokenContractAt(addr).functions.get_config({});
+      if (!cfg || !cfg.initialized) continue;    // never finished — nothing to recover
+      const decimals = Number(cfg.decimals || 0);
+      const [supplyR, ownerR] = await Promise.all([
+        chain.tokenContractAt(addr).functions.total_supply({}).catch(() => ({ result: null })),
+        chain.tokenContractAt(addr).functions.owner({}).catch(() => ({ result: null })),
+      ]);
+      const supplyUnits = String(supplyR.result?.value || '0');
+      registry.tokens.push({
+        address: addr, name: cfg.name || '', symbol: cfg.symbol || '', decimals,
+        mintable: !!cfg.mintable, supplyUnits, supply: chain.fromUnits(supplyUnits, decimals),
+        owner: ownerR.result?.value || null, txid: null, uploadTx: null,
+        ts: Date.now(), recovered: true,
+      });
+      healed++;
+    } catch (_) { /* unreadable right now — retried next boot */ }
+  }
+  if (healed) saveTokens();
+
+  let healedCols = 0;
+  for (const addr of Object.keys(collectionKeys)) {
+    if (registry.collections.some(c => c.address === addr)) continue;
+    try {
+      const c = chain.collectionContractAt(addr);
+      const { result: info } = await c.functions.get_info({});
+      if (!info || !info.name || /^Uninitialized/.test(info.name)) continue;
+      const { result: ownerR } = await c.functions.owner({}).catch(() => ({ result: null }));
+      const rec = {
+        address: addr, name: info.name, symbol: info.symbol || '',
+        owner: ownerR?.value || null, kind: 'user', createdAt: Date.now(),
+        ouro: false, recovered: true,
+      };
+      registry.collections.push(rec);
+      healedCols++;
+      registerOnOuro({ address: addr, name: info.name, owner: rec.owner })
+        .then((ok) => { if (ok) { rec.ouro = true; saveCollections(); } }).catch(() => {});
+    } catch (_) {}
+  }
+  if (healedCols) saveCollections();
+
+  let healedNfts = 0;
+  if (chain.nftEnabled()) {
+    try {
+      const ids = await chain.allCollectionTokens();
+      const have = new Set(registry.nfts.filter(n => n.collection === CFG.collectionAddr).map(n => n.tokenId));
+      let maxSeq = 0;
+      for (const id of ids) {
+        const code = chain.tokenIdToCode(id);
+        const m = /^DK0*(\d+)$/.exec(code || '');
+        if (m) maxSeq = Math.max(maxSeq, parseInt(m[1], 10));
+        if (have.has(id)) continue;
+        let meta = {};
+        try { meta = JSON.parse(await chain.nftMetadata(id) || '{}'); } catch (_) {}
+        const owner = await chain.nftOwner(id).catch(() => null);
+        registry.nfts.push({
+          code: code || id, tokenId: id, name: meta.name || code || id,
+          image: meta.image || '', collection: CFG.collectionAddr, collectionName: PAINT_NAME,
+          owner, txid: null, ts: Date.now(), recovered: true,
+        });
+        healedNfts++;
+      }
+      if (healedNfts) saveNfts();
+      rollDay();
+      if ((registry.counters.seq || 0) < maxSeq) {
+        console.log(`heal:     DK sequence counter behind the chain (${registry.counters.seq || 0} < ${maxSeq}) — bumped`);
+        registry.counters.seq = maxSeq; saveCounters();
+      }
+    } catch (e) { console.log(`heal:     paint reconcile skipped — ${e.message}`); }
+  }
+
+  if (healed || healedCols || healedNfts) {
+    console.log(`heal:     recovered from chain — ${healed} token(s), ${healedCols} collection(s), ${healedNfts} paint NFT(s)`);
+  }
 }

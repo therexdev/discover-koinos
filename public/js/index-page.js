@@ -91,6 +91,7 @@
       st.next(); st.next();
       const r = await Api.mintNft({ ...proof, name, palette: studio.palette(), cells: studio.grid() });
       st.done(txLink(r.txid, r.explorer, r.demo)
+        + (r.ouroUrl ? `<div class="txline">on the marketplace: <a href="${escapeHtml(r.ouroUrl)}" target="_blank" rel="noopener">view it on OURO ↗</a></div>` : '')
         + (r.shareUrl ? `<div class="txline">share it: <a href="${escapeHtml(r.shareUrl)}" target="_blank" rel="noopener">${escapeHtml(r.shareUrl)}</a></div>` : ''));
       UI.markDone('nft');
       toast(`"${name}" is yours — ${r.code}`, 'ok');
@@ -129,9 +130,12 @@
       st.next();
       const r = await Api.launchToken({ ...proof, name, symbol, supply, decimals: 8, mintable });
       st.next();
+      const cfg = UI.config();
       st.done(
         `<div class="txline">contract: ${r.explorer ? `<a href="${escapeHtml(r.explorer)}" target="_blank" rel="noopener">${escapeHtml(r.address)}</a>` : escapeHtml(r.address)}</div>`
         + txLink(r.txid, r.explorerTx, r.demo)
+        + (cfg && cfg.dex && cfg.dex.available
+          ? `<div class="txline">next: <a href="/token#list=${encodeURIComponent(r.address)}">📈 list $${escapeHtml(symbol)} on Trade Koinos — free →</a></div>` : '')
       );
       UI.markDone('token');
       toast(`${symbol} is live — ${r.supply} in your wallet`, 'ok');
@@ -146,7 +150,11 @@
   /* ---- funnel marks the build step ---- */
   $('#funnel-btn').addEventListener('click', () => UI.markDone('build'));
 
-  /* ---- community gallery ---- */
+  /* ---- community gallery + activity feed ----
+     NFT tiles open the piece on OURO (its live marketplace page) when the
+     collection is registered there, else our own share page. Below the
+     grid: fresh tokens (→ explorer), DEX listings (→ the pair on Trade
+     Koinos) and new collections (→ OURO). */
   async function loadGallery() {
     try {
       const g = await Api.gallery();
@@ -154,14 +162,37 @@
       const items = g.nfts.slice(0, 12);
       if (!items.length) {
         host.innerHTML = '<p class="sub">Nothing here yet — yours could be the first.</p>';
-        return;
+      } else {
+        host.innerHTML = items.map(n => {
+          const href = n.ouroUrl || ('/n/' + encodeURIComponent(n.code));
+          return `
+          <a class="nft" href="${escapeHtml(href)}" target="_blank" rel="noopener" title="${n.ouroUrl ? 'View on OURO' : 'View'}">
+            <img src="${escapeHtml(n.image)}" alt="${escapeHtml(n.name)}">
+            <div class="nm">${escapeHtml(n.name)}${n.ouroUrl ? ' <span class="on-ouro">OURO ↗</span>' : ''}</div>
+            <div class="by">${escapeHtml(n.code)} · ${UI.short(n.owner)}</div>
+          </a>`;
+        }).join('');
       }
-      host.innerHTML = items.map(n => `
-        <div class="nft">
-          <img src="${escapeHtml(n.image)}" alt="${escapeHtml(n.name)}">
-          <div class="nm">${escapeHtml(n.name)}</div>
-          <div class="by">${escapeHtml(n.code)} · ${UI.short(n.owner)}</div>
-        </div>`).join('');
+
+      // One merged, newest-first strip of everything else that happened.
+      const events = [];
+      for (const t of (g.tokens || [])) {
+        events.push({ ts: t.ts, icon: '🪙', label: `$${t.symbol} launched`, href: t.explorerUrl, hint: 'View the contract on KoinosBlocks' });
+        if (t.dex) events.push({ ts: t.dex.ts || t.ts, icon: '📈', label: `$${t.symbol} live on the DEX`, href: t.dexUrl, hint: 'Trade it on Trade Koinos' });
+      }
+      for (const c of (g.collections || [])) {
+        events.push({ ts: c.ts || 0, icon: '🖼️', label: `${c.name} collection`, href: c.ouroUrl, hint: 'Browse it on OURO' });
+      }
+      events.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+      const feed = $('#home-feed');
+      if (feed) {
+        feed.innerHTML = events.slice(0, 12).map(ev => {
+          const inner = `<span aria-hidden="true">${ev.icon}</span> ${escapeHtml(ev.label)}`;
+          return ev.href
+            ? `<a class="feed-chip" href="${escapeHtml(ev.href)}" target="_blank" rel="noopener" title="${escapeHtml(ev.hint)}">${inner} <span class="go">↗</span></a>`
+            : `<span class="feed-chip">${inner}</span>`;
+        }).join('');
+      }
     } catch (_) { /* decoration */ }
   }
   loadGallery();

@@ -116,6 +116,11 @@ function initNftUpload(root, { onMinted } = {}) {
       let extra = '';
       if (r.createdCollection) extra += `<div class="txline">new collection: ${escapeHtml(r.createdCollection.name)} (${escapeHtml(r.createdCollection.symbol)})${r.collectionOuroUrl ? ` — <a href="${escapeHtml(r.collectionOuroUrl)}" target="_blank" rel="noopener">on OURO ↗</a>` : ''}</div>`;
       if (r.count > 1) extra += `<div class="txline">${r.count} NFTs minted: ${r.minted.map(m => escapeHtml(m.name)).join(', ')}</div>`;
+      if (r.count > 1 && r.collectionOuroUrl && !r.createdCollection) {
+        extra += `<div class="txline">on the marketplace: <a href="${escapeHtml(r.collectionOuroUrl)}" target="_blank" rel="noopener">view the collection on OURO ↗</a></div>`;
+      } else if (r.count === 1 && r.ouroUrl) {
+        extra += `<div class="txline">on the marketplace: <a href="${escapeHtml(r.ouroUrl)}" target="_blank" rel="noopener">view it on OURO ↗</a></div>`;
+      }
       st.done(extra + txLink(r.txid, r.explorer, r.demo));
       UI.markDone('nft');
       toast(r.count > 1 ? `${r.count} NFTs minted` : `"${r.name}" minted`, 'ok');

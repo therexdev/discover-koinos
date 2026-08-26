@@ -17,7 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Signer, Provider, Contract, Transaction, utils } = require('koilib');
-const { pickRpc, NETWORKS } = require('../tools/rpc');
+const { pickRpcs, NETWORKS } = require('../tools/rpc');
 
 const NETWORK = process.env.KOINOS_NETWORK || 'harbinger';
 const COLLECTION_NAME = process.env.PLAYGROUND_NAME || 'Discover Koinos Paint';
@@ -48,8 +48,7 @@ function sanitizeAbi(abi) {
   }
 
   const net = NETWORKS[NETWORK];
-  const rpcUrl = await pickRpc(NETWORK);
-  const provider = new Provider([rpcUrl]);
+  const provider = new Provider(await pickRpcs(NETWORK));
   const dev = Signer.fromWif(devWif); dev.provider = provider;
   const col = Signer.fromWif(colWif); col.provider = provider;
   const colAddr = col.getAddress();

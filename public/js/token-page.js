@@ -15,6 +15,7 @@
     ? `<a class="mono" href="${escapeHtml(explorer)}/address/${escapeHtml(a)}" target="_blank" rel="noopener">${UI.short(a)}</a>`
     : `<span class="mono">${UI.short(a)}</span>`;
 
+  let dexAvailable = false;
   async function loadMine() {
     const addr = Wallet.address();
     if (!addr) return;
@@ -26,13 +27,36 @@
             <td><span class="sym">${escapeHtml(t.symbol)}</span> ${escapeHtml(t.name)}</td>
             <td>${escapeHtml(fmtUnits(t.balance ?? t.supplyUnits, t.decimals))}</td>
             <td>${addrLink(t.address)}</td>
+            <td>${t.dex && t.dexUrl
+              ? `<a class="btn ghost small" href="${escapeHtml(t.dexUrl)}" target="_blank" rel="noopener" title="Its live KOIN pair on Trade Koinos">Trade ↗</a>`
+              : (dexAvailable ? `<a class="btn ghost small" href="#list=${encodeURIComponent(t.address)}" title="Create the KOIN pair on Trade Koinos — free">📈 List</a>` : '')}</td>
           </tr>`).join('');
       }
       const sel = $('#act-select');
       sel.innerHTML = '<option value="">— pick one of yours —</option>' +
         a.tokens.map(t => `<option value="${escapeHtml(t.address)}" data-mintable="${t.mintable ? 1 : 0}">${escapeHtml(t.symbol)} — ${escapeHtml(t.name)}</option>`).join('');
+      applyListHash();   // a #list=<addr> deep link can now resolve
     } catch (_) {}
   }
+
+  /* Deep link into the DEX listing flow: /token#list=<tokenAddr> — used by
+     the "List it" CTA after a launch (here and on the homepage) and by the
+     per-token List buttons. Preselects the token + action and scrolls. */
+  function applyListHash() {
+    const m = /^#list=(.+)$/.exec(location.hash || '');
+    if (!m || !dexAvailable) return;
+    const token = decodeURIComponent(m[1]);
+    const sel = $('#act-select');
+    if (![...sel.options].some(o => o.value === token)) return;   // not loaded (or not yours)
+    sel.value = token;
+    $('#act-kind').value = 'list_dex';
+    syncActionFields();
+    const card = $('#act-kind').closest('.card') || $('#act-kind');
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('#act-amount').focus();
+    history.replaceState(null, '', location.pathname);   // one-shot
+  }
+  window.addEventListener('hashchange', applyListHash);
 
   async function loadCommunity() {
     try {
@@ -87,6 +111,7 @@
       st.done(
         `<div class="txline">contract: ${r.explorer ? `<a href="${escapeHtml(r.explorer)}" target="_blank" rel="noopener">${escapeHtml(r.address)}</a>` : escapeHtml(r.address)}</div>`
         + txLink(r.txid, r.explorerTx, r.demo)
+        + (dexAvailable ? `<div class="txline">next: <a href="#list=${encodeURIComponent(r.address)}">📈 list $${escapeHtml(symbol)} on Trade Koinos — free →</a></div>` : '')
       );
       UI.markDone('token');
       toast(`${symbol} is live — ${r.supply} in your wallet`, 'ok');
@@ -112,11 +137,13 @@
   /* Gate the DEX option to where Trade Koinos actually exists (mainnet). */
   (async () => {
     const cfg = await Api.config().catch(() => null);
+    dexAvailable = !!(cfg && cfg.dex && cfg.dex.available);
     const opt = [...$('#act-kind').options].find(o => o.value === 'list_dex');
-    if (opt && cfg && cfg.dex && !cfg.dex.available) {
+    if (opt && !dexAvailable) {
       opt.textContent = '📈 List on DEX (mainnet only)';
       opt.disabled = true;
     }
+    if (dexAvailable) { loadMine(); applyListHash(); }   // repaint rows with List/Trade actions
   })();
 
   $('#btn-act').addEventListener('click', async () => {
@@ -147,7 +174,8 @@
         if (prep.demo) { signed = { id: 'demo' }; } else { signed = await Wallet.signTx(prep.tx); }
         st.next();
         const r = await Api.submit({ ref: prep.ref, transaction: signed });
-        st.done(txLink(r.txid, r.explorer, r.demo) + `<div class="txline">listed on Trade Koinos${prep.explorerAddr ? ` — <a href="${escapeHtml(prep.explorerAddr)}" target="_blank" rel="noopener">orderbook ↗</a>` : ''}</div>`);
+        st.done(txLink(r.txid, r.explorer, r.demo)
+          + `<div class="txline">listed on Trade Koinos${prep.dexUrl ? ` — <a href="${escapeHtml(prep.dexUrl)}" target="_blank" rel="noopener">trade the pair ↗</a>` : (prep.explorerAddr ? ` — <a href="${escapeHtml(prep.explorerAddr)}" target="_blank" rel="noopener">orderbook ↗</a>` : '')}</div>`);
         toast('Listed on Trade Koinos — a buyer brings the KOIN', 'ok');
         const sym = ($('#act-select option:checked').textContent.split(' ')[0] || 'TOKEN').replace('—','').trim();
         Share.celebrate('dex', { url: prep.shareUrl, symbol: sym });

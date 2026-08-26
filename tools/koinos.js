@@ -263,6 +263,24 @@ async function nftMetadata(tokenIdHex) {
   } catch (_) { return ''; }
 }
 
+/** Every token id in the Paint collection, straight off the chain — the
+    source of truth the registry can be rebuilt against after a data wipe
+    or a mint whose confirmation was lost to an RPC hiccup. */
+async function allCollectionTokens(max = 2000) {
+  const ids = [];
+  let start = undefined;
+  while (ids.length < max) {
+    const { result } = await collectionContract().functions.get_tokens(
+      start ? { start, limit: 100 } : { limit: 100 });
+    const page = result?.token_ids || [];
+    if (!page.length) break;
+    ids.push(...page);
+    if (page.length < 100) break;
+    start = page[page.length - 1];
+  }
+  return ids;
+}
+
 /** A launched token's on-chain identity + supply, via its own contract. */
 async function tokenInfoAt(addr) {
   const c = tokenContractAt(addr);
@@ -349,6 +367,30 @@ function queueTx(fn) {
   return run;
 }
 
+/** Wait until a broadcast transaction is mined — OUR loop, not koilib's.
+    koilib's wait() dies on the first bad RPC answer, and public RPCs
+    routinely answer one poll with an HTML error page ("Unexpected token <
+    in JSON") while the transaction mines fine — which is how a successful
+    launch got reported to a user as a failure. Here every poll error is
+    treated as transient; only the clock ends the wait. */
+async function waitMined(txId, timeoutMs = 90000) {
+  const p = provider();
+  const deadline = Date.now() + timeoutMs;
+  let lastErr = null;
+  while (Date.now() < deadline) {
+    try {
+      const { transactions } = await p.getTransactionsById([txId]);
+      const t = transactions && transactions[0];
+      if (t && t.containing_blocks && t.containing_blocks.length) {
+        return { blockId: t.containing_blocks[0] };
+      }
+    } catch (e) { lastErr = e; }          // transient: HTML page, timeout, blip
+    await new Promise(r => setTimeout(r, 2500));
+  }
+  const why = lastErr ? ` (last poll error: ${String(lastErr.message || lastErr).slice(0, 120)})` : '';
+  throw new Error(`not seen in a block within ${Math.round(timeoutMs / 1000)}s${why}`);
+}
+
 /** Server-only transaction: ops signed by the dev wallet, mined before
     resolving. Returns the transaction id. */
 async function devTx(ops) {
@@ -361,7 +403,7 @@ async function devTx(ops) {
     await tx.prepare();
     await tx.sign();
     await tx.send();
-    try { await tx.wait('byTransactionId', 60000); }
+    try { await waitMined(tx.transaction.id); }
     catch (e) {
       /* Mined-confirmation timed out; the transaction may still land.
          The id is carried on the error so a caller that later finds the
@@ -397,7 +439,7 @@ async function sendAsAccount(key, ops, { rcLimit = K.rcLimit } = {}) {
     const send = new Transaction({ provider: provider() });
     send.transaction = tx.transaction;
     await send.send();
-    try { await send.wait('byTransactionId', 60000); }
+    try { await waitMined(tx.transaction.id); }
     catch (e) {
       const err = new Error(`transaction ${tx.transaction.id} not confirmed: ${e.message || e}`);
       err.txId = tx.transaction.id;
@@ -444,8 +486,13 @@ async function submitCosigned(signedTx, preparedId, userAddr) {
     const tx = new Transaction({ provider: provider() });
     tx.transaction = clean;
     await tx.send();
-    try { await tx.wait('byTransactionId', 60000); }
-    catch (e) { throw new Error(`transaction ${clean.id} not confirmed: ${e.message || e}`); }
+    try { await waitMined(clean.id); }
+    catch (e) {
+      const err = new Error(`transaction ${clean.id} not confirmed: ${e.message || e}`);
+      err.txId = clean.id;
+      err.broadcast = true;
+      throw err;
+    }
     return clean.id;
   });
 }
@@ -708,7 +755,7 @@ module.exports = {
   opTokenTransfer, opTokenMint, opTokenBurn, opUploadContract, opTokenInitialize,
   devTx, sendAsAccount, prepareUserTx, submitCosigned, queueTx,
   mintNft, mintToCollection, mintManyToCollection, launchToken, launchCollection, newAccount,
-  tokenInitialized, collectionInitializedAt,
+  tokenInitialized, collectionInitializedAt, allCollectionTokens,
   toDexPrice, dexMarketId, ensureDexMarket, opsDexSell,
   verifyAuthSignature, codeToTokenId, tokenIdToCode,
   COLLECTION_ABI, TOKEN_ABI, KOIN_ABI, ORDERBOOK_ABI,

@@ -39,6 +39,10 @@ const NETWORKS = {
     vhpContract: '12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq',
     rpcs: [
       'https://api.koinos.io',
+      /* Fallback: koinosblocks' public node. api.koinos.io intermittently
+         answers polls with an HTML error page; with two candidates the
+         provider rotates instead of failing a user's mint. */
+      'https://api.koinosblocks.com',
     ],
     faucets: [],
   },
@@ -75,20 +79,34 @@ async function probe(url, { timeoutMs = 8000 } = {}) {
 
 /** First endpoint that answers, or throw with every failure listed. */
 async function pickRpc(netName, { quiet = false } = {}) {
-  const net = NETWORKS[netName];
-  if (!net) throw new Error(`Unknown network '${netName}' — use harbinger or mainnet`);
-  const errors = [];
-  for (const url of rpcCandidates(netName)) {
-    try {
-      await probe(url);
-      if (!quiet) console.log(`rpc:      ${url}`);
-      return url;
-    } catch (e) {
-      errors.push(`  ${url} — ${e.message || e}`);
-    }
-  }
-  throw new Error('No usable Koinos RPC endpoint. Tried:\n' + errors.join('\n')
-    + '\nSet KOINOS_RPC=<url> to use your own (koinos.pro offers free API keys).');
+  return (await pickRpcs(netName, { quiet }))[0];
 }
 
-module.exports = { NETWORKS, rpcCandidates, probe, pickRpc, rpc };
+/** ALL candidates ordered for failover: probed-healthy first (original
+    priority preserved), then the ones that failed the probe as a last
+    resort — a node that was down at boot may be back an hour later, and
+    koilib's Provider rotates through whatever list it holds. Throws only
+    when nothing answers at all. */
+async function pickRpcs(netName, { quiet = false } = {}) {
+  const net = NETWORKS[netName];
+  if (!net) throw new Error(`Unknown network '${netName}' — use harbinger or mainnet`);
+  const candidates = rpcCandidates(netName);
+  const results = await Promise.all(candidates.map(async (url) => {
+    try { await probe(url); return { url, ok: true }; }
+    catch (e) { return { url, ok: false, err: String(e.message || e) }; }
+  }));
+  const healthy = results.filter(r => r.ok).map(r => r.url);
+  const down = results.filter(r => !r.ok);
+  if (!healthy.length) {
+    throw new Error('No usable Koinos RPC endpoint. Tried:\n'
+      + down.map(r => `  ${r.url} — ${r.err}`).join('\n')
+      + '\nSet KOINOS_RPC=<url> to use your own (koinos.pro offers free API keys).');
+  }
+  if (!quiet) {
+    console.log(`rpc:      ${healthy.join(', ')}`
+      + (down.length ? `  (down: ${down.map(r => r.url).join(', ')})` : ''));
+  }
+  return healthy.concat(down.map(r => r.url));
+}
+
+module.exports = { NETWORKS, rpcCandidates, probe, pickRpc, pickRpcs, rpc };

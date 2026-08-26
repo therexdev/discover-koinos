@@ -141,6 +141,11 @@ code { font-family: var(--font-mono); font-size: .9em; background: var(--bg-inse
   border: 1px solid var(--line-strong); border-radius: 999px; padding: 6px 14px; margin-bottom: 22px;
 }
 .hero p.lead { font-size: clamp(1.05rem, 2vw, 1.25rem); color: var(--text-dim); max-width: 640px; margin: 0 auto 30px; }
+.hero .lead-punch {
+  display: block; margin-top: 10px; font-family: var(--font-head); font-weight: 800;
+  background: linear-gradient(90deg, var(--accent), #b795ff);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
 .hero .cta-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; align-items: center; }
 .hero .cta-note { font-size: .85rem; color: var(--text-dim); margin-top: 14px; }
 
@@ -283,9 +288,24 @@ label.field input:focus, .input:focus { outline: 2px solid var(--accent); outlin
   background: var(--bg-card); border: 1px solid var(--line); border-radius: var(--radius-sm);
   padding: 10px; text-align: center;
 }
+/* NFT tiles double as links (→ the piece on OURO, or its share page). */
+a.nft { display: block; text-decoration: none; color: inherit; transition: border-color .12s, transform .12s; }
+a.nft:hover { border-color: var(--accent); transform: translateY(-2px); }
 .gallery .nft img { width: 100%; aspect-ratio: 1; image-rendering: pixelated; border-radius: 6px; background: var(--bg-inset); }
 .gallery .nft .nm { font-weight: 700; color: var(--text-bright); font-size: .88rem; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gallery .nft .by { font-family: var(--font-mono); font-size: .68rem; color: var(--text-dim); }
+.gallery .nft .on-ouro { font-size: .64rem; font-weight: 800; letter-spacing: .05em; color: var(--accent-soft); vertical-align: 1px; }
+
+/* The homepage activity strip: fresh tokens, DEX listings, collections. */
+.feed-strip { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; justify-content: center; }
+.feed-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--font-head); font-weight: 700; font-size: .85rem; color: var(--text-bright);
+  background: var(--bg-card); border: 1px solid var(--line-strong); border-radius: 999px;
+  padding: 7px 14px; text-decoration: none; transition: border-color .12s, transform .12s;
+}
+a.feed-chip:hover { border-color: var(--accent); transform: translateY(-1px); }
+.feed-chip .go { color: var(--accent-soft); font-size: .8rem; }
 
 .tokens-table { width: 100%; border-collapse: collapse; font-size: .92rem; }
 .tokens-table th { text-align: left; font-size: .74rem; letter-spacing: .07em; text-transform: uppercase; color: var(--text-dim); padding: 8px 10px; border-bottom: 1px solid var(--line); }

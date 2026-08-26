@@ -15,7 +15,11 @@
     const faucets = (cfg.faucets || []);
     $('#w-faucets').innerHTML = faucets.length
       ? faucets.map(f => `<li><a href="${escapeHtml(f.url)}" target="_blank" rel="noopener"><span>${escapeHtml(f.name)}</span><span class="where">↗</span></a><p class="hint" style="padding:0 18px 12px">${escapeHtml(f.note)}</p></li>`).join('')
-      : '<li><a href="https://koinos.io/get-koin" target="_blank" rel="noopener"><span>Where to get KOIN</span><span class="where">↗</span></a></li>';
+      /* Mainnet: the KOIN/USDT pair on Uniswap (Ethereum; KOIN bridged via
+         Chainge), plus koinos.io's own where-to-get roundup as backup. */
+      : `<li><a href="https://app.uniswap.org/swap?inputCurrency=0xdAC17F958D2ee523a2206206994597C13D831ec7&amp;outputCurrency=0xed11c9BCF69fdD2EEFd9Fe751BfcA32f171D53Ae" target="_blank" rel="noopener"><span>Buy KOIN on Uniswap</span><span class="where">USDT pair ↗</span></a>
+           <p class="hint" style="padding:0 18px 12px">Swaps USDT → KOIN on Ethereum (bridge to Koinos with Chainge). Check the pool's liquidity before a big swap.</p></li>
+         <li><a href="https://koinos.io/get-koin" target="_blank" rel="noopener"><span>All ways to get KOIN</span><span class="where">↗</span></a></li>`;
   }).catch(() => {});
 
   async function paint() {

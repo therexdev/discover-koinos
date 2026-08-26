@@ -80,14 +80,20 @@ In hPanel:
 
 The server keeps its registry (launched tokens, minted NFTs, **launched-token
 keys**) in `data/*.json` — which is gitignored, so a from-scratch redeploy
-starts with an empty registry. Two options:
+starts with an empty registry.
 
-- fine for the testnet phase (the chain state itself is untouched; the site
-  just forgets its gallery), or
-- point `data/` at persistent storage / back it up on deploy if you want the
-  gallery and token upgrade keys to survive rebuilds. `data/token-keys.json`
-  is the one file that matters: it holds each launched token's upgrade
-  authority.
+**Fix: set `DATA_DIR` to a path OUTSIDE the deploy directory** (e.g.
+`DATA_DIR=/home/<user>/dk-data`) so redeploys can't touch it.
+`data/token-keys.json` is the one file that truly matters: it holds each
+launched token's upgrade authority.
+
+Safety net: at every boot the server **reconciles the registry against the
+chain** — launched tokens and collections whose keys survive, and every Paint
+NFT (name + image travel in on-chain metadata), are re-discovered and put back
+in the gallery, and the mint-id counter is bumped past every id already used
+on-chain (so a wiped counter can never cause "token already minted"). Uploaded
+NFT *images* live in `data/uploads/` and cannot be rebuilt from chain — one
+more reason to set `DATA_DIR`.
 
 ## 5. Go live on MAINNET — the full runbook
 
