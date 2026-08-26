@@ -103,10 +103,10 @@ node server.js
 | `DATA_DIR` | `./data` | where records, keys and uploads live — **point it OUTSIDE the deploy directory** on hosts that wipe the app folder on redeploy (the server also self-heals from the chain, but images can't be rebuilt) |
 | `DEMO_MODE` | — | `1` forces demo mode |
 | **Social login** | | *(all optional; Local Wallet + Import always work)* |
-| `GOOGLE_CLIENT_ID` | *(inherited)* | **Aurvania's** Google OAuth client ID (`…apps.googleusercontent.com`). Enables the Google button, which opens the **same wallet as Aurvania & OURO**. Leave unset to inherit it from Aurvania at boot. No `LOGIN_SECRET` needed — Google is bridged, not custodied here |
+| `GOOGLE_CLIENT_ID` | *(inherited)* | **Aurvania's** Google OAuth client ID (`…apps.googleusercontent.com`). Enables the Google button, which opens the **same wallet as Aurvania & OURO**. Leave unset to inherit it from Aurvania at boot. Works with or without `LOGIN_SECRET` — see [Google custody](#google-bridged-or-held-here) |
 | `AURVANIA_API` | `https://aurvania.quest` | the shared account server Google sign-in bridges to |
 | `BRIDGE_UA` | `curl/8.5.0 (…)` | User-Agent the bridge presents (aurvania.quest 403s unfamiliar ones) |
-| `LOGIN_SECRET` | — | **required for X** — encrypts the custodied X wallet at rest. Without it, only the X button stays off |
+| `LOGIN_SECRET` | — | **required for X**, and switches Google to being held here rather than bridged — encrypts custodied wallets at rest. Without it the X button stays off and Google bridges every login |
 | `X_CLIENT_ID` / `X_CLIENT_SECRET` | — | X (Twitter) OAuth 2.0 app credentials — enable the X button |
 | `X_REDIRECT_URI` | `PUBLIC_ORIGIN/auth/x/callback` | must exactly match a callback URL registered in your X app |
 | **Integrations** | | |
@@ -164,12 +164,11 @@ a Koinos key and signs locally:
 
 - **Local Wallet** (recommended, non-custodial) — generated in the browser, never leaves it.
 - **Import** — paste a WIF backup.
-- **Google** — *bridged to Aurvania*: the browser's Google ID token is forwarded
-  to `aurvania.quest/api/account`, which returns the **same wallet the same
-  Google account has in Aurvania and on OURO** — one identity, one address,
-  every Koinos site. That shared custody store (not any key derivation) is what
-  makes the address match. We store nothing for Google; the WIF is released to
-  the browser, which then signs locally like a Local Wallet.
+- **Google** — opens the **same wallet the same Google account has in Aurvania
+  and on OURO** — one identity, one address, every Koinos site. That shared
+  custody store (not any key derivation) is what makes the address match. The
+  WIF is released to the browser, which then signs locally like a Local Wallet.
+  Where the key is *kept* depends on `LOGIN_SECRET` — see below.
 - **X (Twitter)** — *custodial at rest here*: the server generates a keypair,
   stores it **AES-256-GCM encrypted** (key derived from `LOGIN_SECRET`), and
   releases it to the browser on a verified login. The trade-off is stated in the UI.
@@ -177,8 +176,37 @@ a Koinos key and signs locally:
 **Enabling Google:** it must use **Aurvania's** Google client id (Aurvania
 checks the ID token's `aud` against its own). Either set `GOOGLE_CLIENT_ID` to
 that same id, or leave it unset and the gateway inherits it from Aurvania's
-`/api/chain-info` at boot. Nothing else is required — no OAuth console changes,
-no `LOGIN_SECRET`. (The CSP widens to Google's origins only when this is set.)
+`/api/chain-info` at boot. Nothing else is required — no OAuth console changes.
+(The CSP widens to Google's origins only when this is set.)
+
+### Google: bridged, or held here
+
+Set `LOGIN_SECRET` and this gateway becomes the account home for Google
+instead of forwarding every login. It then verifies the ID token with Google
+itself (`aud`, `email_verified`, `exp`) and keeps the key encrypted here, the
+same way X wallets are kept. The boot log says which mode is live.
+
+**Existing users keep their exact wallet.** The first time this gateway meets
+an account it does *not* generate a key — it asks Aurvania for the wallet that
+account already owns and adopts that one, verifying the key really controls the
+address before storing it. After that the account is served locally and
+Aurvania is never consulted for it again.
+
+That adoption step is why the local path **fails closed**: if Aurvania cannot
+be reached and there is no local record, sign-in returns an error rather than
+minting a wallet. "No local record" is not evidence that no wallet exists, and
+a key issued on a bad guess would hand the user a different address and strand
+whatever the real one holds.
+
+Two things to know before changing any of this:
+
+- Aurvania keys Google accounts by the token's `sub`, so the **client id must
+  stay the same** or accounts will not be found. Renaming the OAuth consent
+  screen (for branding) does not change the id and is safe.
+- Aurvania and this gateway derive their encryption keys with **different
+  salts** (`kc-wif-enc-v1` vs `dk-wif-enc-v1`), so a stored key is not portable
+  between them by copying. Anything moved in bulk has to be decrypted and
+  re-encrypted, never copied.
 
 **Enabling X:** create an OAuth 2.0 app at developer.x.com with a **confidential
 client**, add `PUBLIC_ORIGIN/auth/x/callback` as a redirect URI, and set

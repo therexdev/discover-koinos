@@ -68,6 +68,8 @@ const CFG = {
      unfamiliar User-Agents, hence the curl-like bridge identity. */
   aurvaniaApi: (process.env.AURVANIA_API || 'https://aurvania.quest').replace(/\/+$/, ''),
   bridgeUa: (process.env.BRIDGE_UA || 'curl/8.5.0 (Discover-Koinos gateway)').trim(),
+  // overridable only so the Google verification path is testable offline
+  googleTokenInfo: (process.env.GOOGLE_TOKENINFO || 'https://oauth2.googleapis.com/tokeninfo').replace(/\/+$/, ''),
 
   /* OURO marketplace auto-registration (discoverability). Server-to-server;
      no key needed to register, admin key only lifts the rate limit. */
@@ -99,11 +101,17 @@ const xRedirectUri = CFG.xRedirectUri || (CFG.publicOrigin ? CFG.publicOrigin.re
 const auth = createAuth({
   dataDir: DATA_DIR,
   loginSecret: CFG.loginSecret || require('node:crypto').randomBytes(32).toString('hex'),
-  // Google is bridged to Aurvania — no local custody, so it needs only a
-  // client id (ours, or inherited from Aurvania at boot), NOT LOGIN_SECRET.
   googleClientId: CFG.googleClientId,
   aurvaniaApi: CFG.aurvaniaApi,
   bridgeUa: CFG.bridgeUa,
+  /* With LOGIN_SECRET this gateway becomes the account home for Google and
+     holds the keys itself; without it Google stays bridged to Aurvania and
+     nothing is custodied here. The user's address is the same either way —
+     the local path adopts the wallet Aurvania already has on first sight
+     instead of generating one. Gated on the REAL secret, never the random
+     per-boot fallback above, which no stored key could survive. */
+  googleLocalCustody: !!CFG.loginSecret,
+  googleTokenInfo: CFG.googleTokenInfo,
   // X is custodied here, so it stays gated on LOGIN_SECRET (encrypted keys
   // must survive restarts) AND its own credentials.
   xClientId: CFG.loginSecret ? CFG.xClientId : '',
@@ -1399,7 +1407,12 @@ const server = http.createServer(async (req, res) => {
   // none of our own, so the shared-wallet login works out of the box.
   await auth.warmup();
   // Social login readiness.
-  if (auth.googleEnabled()) console.log(`auth:     Google sign-in ENABLED (bridged to ${auth.aurvania()} — shared wallet with Aurvania / OURO)`);
+  if (auth.googleEnabled()) {
+    console.log(auth.googleCustody()
+      ? `auth:     Google sign-in ENABLED — wallets held HERE, adopted from ${auth.aurvania()} on first login (same address as Aurvania / OURO)`
+      : `auth:     Google sign-in ENABLED (bridged to ${auth.aurvania()} — shared wallet with Aurvania / OURO)`);
+    if (!auth.googleCustody()) console.log('          set LOGIN_SECRET to hold Google wallets here instead of bridging every login');
+  }
   else console.log(`auth:     Google sign-in OFF — set GOOGLE_CLIENT_ID (Aurvania's) or make ${auth.aurvania()} reachable at boot`);
   if (auth.xEnabled()) console.log('auth:     X (Twitter) sign-in ENABLED');
   else if (CFG.xClientId && !CFG.loginSecret) console.log('auth:     X client id set but LOGIN_SECRET is unset — X sign-in stays OFF');

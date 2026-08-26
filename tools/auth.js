@@ -4,14 +4,22 @@
    Local Wallet and Import stay fully non-custodial (the key is made and
    kept in the browser).
 
-   GOOGLE is BRIDGED to Aurvania (the Koinos game / OURO account system):
-   we forward the Google ID token to aurvania.quest/api/account, and it
-   answers with the SAME wallet that Google login owns in Aurvania and on
-   OURO — one identity, one address, every site. We custody nothing for
-   Google; Aurvania holds the encrypted key and releases the WIF to this
-   browser on a verified login. (The ID token must be minted for AURVANIA's
-   Google client id, so the button uses that id — set GOOGLE_CLIENT_ID to
-   it, or leave it unset and we inherit it from Aurvania at boot.)
+   GOOGLE opens the SAME wallet the account owns in Aurvania and on OURO —
+   one identity, one address, every site. How that happens depends on whether
+   this gateway can keep an encrypted key:
+
+     - Without LOGIN_SECRET it stays BRIDGED, custodying nothing: the ID
+       token goes to aurvania.quest/api/account and Aurvania answers with
+       the wallet.
+     - With LOGIN_SECRET this gateway is the account home. It verifies the
+       ID token with Google itself and holds the key, and the first time it
+       meets an account it ADOPTS the wallet Aurvania already has rather
+       than generating one — which is what keeps every existing address
+       intact through the move.
+
+   Either way the ID token must be minted for the Google client id Aurvania
+   checks `aud` against, so the button uses that id — set GOOGLE_CLIENT_ID
+   to it, or leave it unset and we inherit it from Aurvania at boot.
 
    X (Twitter) is the one convenience path we custody ourselves: the server
    generates a keypair, stores it ENCRYPTED (AES-256-GCM under a key derived
@@ -39,6 +47,12 @@ function createAuth(cfg) {
     // Google bridge → Aurvania / OURO shared account system.
     aurvaniaApi = 'https://aurvania.quest',
     bridgeUa = 'curl/8.5.0 (Discover-Koinos gateway)',
+    /* Set once LOGIN_SECRET is present: this gateway then verifies Google ID
+       tokens itself and custodies the keys, adopting the existing wallet from
+       Aurvania the first time it sees an account. See google(). */
+    googleLocalCustody = false,
+    // overridable so the verification path is testable without Google
+    googleTokenInfo = 'https://oauth2.googleapis.com/tokeninfo',
   } = cfg;
 
   /* The Google client id we actually use. If the operator set one we keep
@@ -131,14 +145,51 @@ function createAuth(cfg) {
   const googleEnabled = () => !!resolvedGoogleCid;
   const xEnabled = () => !!(xClientId && xClientSecret && xRedirectUri);
 
-  /* ---- Google → the Aurvania bridge ----
-     We do NOT verify or custody here. Aurvania verifies the ID token (Google
-     tokeninfo + aud + email_verified) and returns the SAME wallet the same
-     Google account has in Aurvania and on OURO. That shared custody store —
-     not any derivation — is what makes the address identical across sites. */
-  async function google(idToken) {
-    if (!googleEnabled()) { const e = new Error('Google sign-in is not configured on this server'); e.status = 503; throw e; }
-    if (!idToken) { const e = new Error('idToken required'); e.status = 400; throw e; }
+  /* ---- Google ----
+     Two modes, and the wallet is the same address in both.
+
+     Without LOGIN_SECRET we cannot keep an encrypted key across a restart, so
+     Google stays purely BRIDGED: Aurvania verifies and answers with the
+     wallet, exactly as before.
+
+     With LOGIN_SECRET (googleLocalCustody) this gateway becomes the account
+     home: it verifies the ID token itself and holds the key. The first time
+     it meets an account it ADOPTS the wallet Aurvania already has for it
+     rather than generating one — see google() for why that is not optional. */
+
+  /* Verify the ID token with Google. Mandatory the moment we custody keys:
+     a local record is released on the strength of `sub` alone, so without
+     this an attacker could hand us any JSON and open someone's wallet. */
+  async function verifyGoogleIdToken(idToken) {
+    let info;
+    try {
+      const r = await fetch(googleTokenInfo + '?id_token=' + encodeURIComponent(idToken), {
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!r.ok) { const e = new Error('Google rejected that sign-in — try again'); e.status = 401; throw e; }
+      info = await r.json();
+    } catch (e) {
+      if (e.status) throw e;
+      const x = new Error('Could not reach Google — try again shortly'); x.status = 502; throw x;
+    }
+    if (info.aud !== resolvedGoogleCid) {
+      const e = new Error('That sign-in belongs to a different app'); e.status = 401; throw e;
+    }
+    if (String(info.email_verified) !== 'true' || !info.sub || !info.email) {
+      const e = new Error('Google did not verify that email'); e.status = 401; throw e;
+    }
+    /* tokeninfo rejects an expired token itself, so this is belt and braces
+       against a cached or replayed 200. */
+    if (info.exp && Number(info.exp) * 1000 <= Date.now()) {
+      const e = new Error('That sign-in expired — try again'); e.status = 401; throw e;
+    }
+    return { sub: String(info.sub), email: String(info.email).toLowerCase() };
+  }
+
+  /* The wallet Aurvania holds for this identity. Note there is no "no wallet"
+     answer: Aurvania creates one when it has none, so a success here is
+     always the canonical address for the account. */
+  async function aurvaniaWallet(idToken) {
     let r;
     try {
       r = await bridgeFetch(aurvaniaApi + '/api/account', {
@@ -148,14 +199,68 @@ function createAuth(cfg) {
         timeoutMs: 15000,
       });
     } catch (_) {
-      const e = new Error('Could not reach the Koinos account service — try again shortly'); e.status = 502; throw e;
+      const e = new Error('Could not reach the Koinos account service — try again shortly');
+      e.status = 502; throw e;
     }
     if (!r.ok || !r.body || !r.body.wif) {
       // Pass Aurvania's own reason through — a mismatched client id shows up
       // here as "belongs to a different app", which points at the real fix.
-      const e = new Error((r.body && r.body.error) || 'Google sign-in failed'); e.status = r.status || 502; throw e;
+      const e = new Error((r.body && r.body.error) || 'Google sign-in failed');
+      e.status = r.status || 502; throw e;
     }
-    return { wif: r.body.wif, address: r.body.address, created: !!r.body.created, label: jwtEmail(idToken) || 'Google account' };
+    return { wif: String(r.body.wif), address: String(r.body.address), created: !!r.body.created };
+  }
+
+  async function google(idToken) {
+    if (!googleEnabled()) { const e = new Error('Google sign-in is not configured on this server'); e.status = 503; throw e; }
+    if (!idToken) { const e = new Error('idToken required'); e.status = 400; throw e; }
+
+    if (!googleLocalCustody) {
+      const remote = await aurvaniaWallet(idToken);
+      return { ...remote, label: jwtEmail(idToken) || 'Google account' };
+    }
+
+    const id = await verifyGoogleIdToken(idToken);
+
+    const rec = store.byGoogle[id.sub];
+    if (rec && rec.wifEnc) {
+      if (rec.email !== id.email) { rec.email = id.email; save(); }
+      return { wif: release(rec, 'google'), address: rec.addr, created: false, label: id.email };
+    }
+
+    /* First time this gateway has seen the account.
+
+       Do NOT generate a wallet here. The same Google account almost certainly
+       already owns one in Aurvania, and minting a fresh key would hand the
+       user a different address and strand whatever the old one holds. Adopt
+       Aurvania's answer instead — that is what keeps the address identical
+       across every site through this change.
+
+       And if Aurvania cannot be reached, FAIL. "No local record" is not
+       evidence that no wallet exists, and a new key issued on a bad guess is
+       not recoverable. */
+    const remote = await aurvaniaWallet(idToken);
+
+    // the released key must actually control the address it came with
+    let derived;
+    try { derived = Signer.fromWif(remote.wif).getAddress(); }
+    catch (_) { derived = ''; }
+    if (derived !== remote.address) {
+      const e = new Error('The account service returned a mismatched wallet — sign-in refused');
+      e.status = 502; throw e;
+    }
+
+    store.byGoogle[id.sub] = {
+      email: id.email,
+      wifEnc: encryptWif(remote.wif),
+      addr: remote.address,
+      adoptedFrom: aurvaniaApi,
+      adoptedAt: Date.now(),
+    };
+    save();
+    console.log(`[auth] adopted the Google wallet ${remote.address} from ${aurvaniaApi}`);
+
+    return { wif: remote.wif, address: remote.address, created: !!remote.created, label: id.email };
   }
 
   /* ---- X (Twitter) OAuth 2.0 with PKCE ----
@@ -244,6 +349,7 @@ function createAuth(cfg) {
   return {
     warmup, googleEnabled, xEnabled, google, xLoginUrl, xCallback, xClaimWif,
     googleClientId: () => resolvedGoogleCid,
+    googleCustody: () => !!googleLocalCustody,
     aurvania: () => aurvaniaApi,
   };
 }
