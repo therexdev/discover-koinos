@@ -53,6 +53,8 @@ function createAuth(cfg) {
     googleLocalCustody = false,
     // overridable so the verification path is testable without Google
     googleTokenInfo = 'https://oauth2.googleapis.com/tokeninfo',
+    /* Aurvania's LOGIN_SECRET, when a bulk import is wanted (see below). */
+    aurvaniaImportSecret = '',
   } = cfg;
 
   /* The Google client id we actually use. If the operator set one we keep
@@ -95,6 +97,44 @@ function createAuth(cfg) {
   }
 
   const FILE = path.join(dataDir, 'logins.json');
+
+  /* ---- boot-time bulk import from Aurvania ----
+     The no-terminal path for completing the store: drop Aurvania's
+     logins.json into DATA_DIR as `aurvania-logins.json`, set
+     AURVANIA_LOGIN_SECRET, restart. Running here — before the store is
+     loaded, inside the only process that ever writes it — removes the
+     stop-the-server-first hazard the standalone CLI carries.
+
+     Gated on local custody: without the real LOGIN_SECRET the wrapping key
+     is random per boot, and wallets imported under it would be unopenable
+     after the next restart. All-or-nothing: a failed import logs loudly,
+     writes nothing, and the gateway boots normally on its existing store. */
+  if (googleLocalCustody && aurvaniaImportSecret) {
+    const src = path.join(dataDir, 'aurvania-logins.json');
+    if (fs.existsSync(src)) {
+      try {
+        const { importAurvania } = require('./import-aurvania');
+        const r = importAurvania({
+          sourceFile: src, sourceSecret: aurvaniaImportSecret,
+          destFile: FILE, destSecret: loginSecret, write: true,
+        });
+        for (const line of r.failLines) console.error('[auth:import] ' + line);
+        for (const line of r.lines) console.log('[auth:import] ' + line);
+        if (r.ok) {
+          const done = src.replace(/\.json$/, `.imported-${Date.now()}.json`);
+          try { fs.renameSync(src, done); console.log(`[auth:import] source renamed to ${path.basename(done)} — it will not be processed again (safe to delete)`); }
+          catch (_) { console.log('[auth:import] could not rename the source file — re-running is harmless (a clean no-op), but delete it once done'); }
+        } else {
+          console.error(`[auth:import] IMPORT ABORTED — ${r.failures} record(s) failed, the store is untouched. Usually AURVANIA_LOGIN_SECRET is wrong; fix and restart.`);
+        }
+      } catch (e) {
+        console.error('[auth:import] import could not run: ' + e.message + ' — the store is untouched');
+      }
+    } else {
+      console.log('[auth:import] AURVANIA_LOGIN_SECRET is set but data/aurvania-logins.json was not found — nothing to import (remove the env var once migration is done)');
+    }
+  }
+
   let store;
   try { store = JSON.parse(fs.readFileSync(FILE)); } catch (_) { store = {}; }
   store.byGoogle = store.byGoogle || {};

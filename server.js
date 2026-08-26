@@ -112,6 +112,10 @@ const auth = createAuth({
      per-boot fallback above, which no stored key could survive. */
   googleLocalCustody: !!CFG.loginSecret,
   googleTokenInfo: CFG.googleTokenInfo,
+  /* Bulk import from Aurvania at boot: drop aurvania-logins.json into
+     DATA_DIR and set AURVANIA_LOGIN_SECRET, then restart — see tools/auth.js.
+     Gated on the real LOGIN_SECRET for the same reason custody is. */
+  aurvaniaImportSecret: CFG.loginSecret ? (process.env.AURVANIA_LOGIN_SECRET || '') : '',
   // X is custodied here, so it stays gated on LOGIN_SECRET (encrypted keys
   // must survive restarts) AND its own credentials.
   xClientId: CFG.loginSecret ? CFG.xClientId : '',

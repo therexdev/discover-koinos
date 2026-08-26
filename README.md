@@ -209,12 +209,22 @@ Two things to know before changing any of this:
   re-encrypted, never copied.
 
 **Bulk migration** (accounts that have not logged in yet, so lazy adoption has
-not reached them): `tools/import-aurvania-logins.js` does the
-decrypt-verify-re-encrypt move for every Google wallet in Aurvania's
-`logins.json`, all-or-nothing, without ever overwriting an adopted record.
-It is a rehearsal by default and only writes with `--apply`. The header of
-that file is the runbook — including why the gateway must be stopped while
-it runs.
+not reached them) needs no terminal:
+
+1. copy Aurvania's `logins.json` into this gateway's `DATA_DIR` as
+   **`aurvania-logins.json`** (hPanel File Manager is enough),
+2. set **`AURVANIA_LOGIN_SECRET`** in the gateway's environment,
+3. restart, and read the `[auth:import]` lines in the boot log.
+
+The import runs before anything is served, is all-or-nothing (a failure logs
+loudly, writes nothing, and the gateway boots normally on its existing
+store), never overwrites an adopted record, and renames the source file to
+`aurvania-logins.imported-<ts>.json` on success so it can never run twice.
+Remove the env var and delete the renamed file when done.
+
+The same import exists as a CLI (`tools/import-aurvania-logins.js`,
+rehearsal by default, `--apply` to write) — only use it with the gateway
+STOPPED; the boot path has no such hazard.
 
 **Enabling X:** create an OAuth 2.0 app at developer.x.com with a **confidential
 client**, add `PUBLIC_ORIGIN/auth/x/callback` as a redirect URI, and set
