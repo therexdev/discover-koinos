@@ -657,7 +657,10 @@ api.launchToken = async (body, ip, req) => {
            out) this is the only surviving copy. Never let it ride on a
            thrown Error into the logs. */
         const acct = chain.newAccount();
-        tokenKeys[acct.address] = acct.wif; saveTokenKeys();
+        /* The spec rides along with the key: if the launch dies between
+           upload and initialize (an RPC blackout), the boot reconciler can
+           FINISH it instead of stranding a paid-for contract. */
+        tokenKeys[acct.address] = { wif: acct.wif, spec, ts: Date.now() }; saveTokenKeys();
         const launched = await chain.launchToken(spec, wasm, acct.key);
         address2 = launched.address; uploadTx = launched.uploadTx; initTx = launched.initTx;
       } finally { releaseMana(); }
@@ -1420,8 +1423,24 @@ async function reconcileRegistry() {
   for (const addr of Object.keys(tokenKeys)) {
     if (registry.tokens.some(t => t.address === addr)) continue;
     try {
-      const { result: cfg } = await chain.tokenContractAt(addr).functions.get_config({});
-      if (!cfg || !cfg.initialized) continue;    // never finished — nothing to recover
+      const held = tokenKeys[addr];
+      const wif = typeof held === 'string' ? held : held.wif;
+      const spec = typeof held === 'string' ? null : held.spec;
+      let { result: cfg } = await chain.tokenContractAt(addr).functions.get_config({});
+      if (!cfg) continue;                        // no contract deployed — nothing on-chain to recover
+      if (!cfg.initialized) {
+        /* Deployed but never set up — the upload landed and its mana is
+           already spent. With the stored spec we can FINISH the launch. */
+        if (!spec || !wif) continue;
+        console.log(`heal:     finishing interrupted launch at ${addr} ("${spec.symbol}")…`);
+        try {
+          await chain.sendAsAccount(chain.keyFromWif(wif), [await chain.opTokenInitialize(addr, spec)]);
+        } catch (e) {
+          if (!(await chain.tokenInitialized(addr))) { console.log(`heal:     ${addr} initialize failed — ${e.message}`); continue; }
+        }
+        ({ result: cfg } = await chain.tokenContractAt(addr).functions.get_config({}));
+        if (!cfg || !cfg.initialized) continue;
+      }
       const decimals = Number(cfg.decimals || 0);
       const [supplyR, ownerR] = await Promise.all([
         chain.tokenContractAt(addr).functions.total_supply({}).catch(() => ({ result: null })),

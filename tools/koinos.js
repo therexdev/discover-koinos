@@ -367,6 +367,39 @@ function queueTx(fn) {
   return run;
 }
 
+/* Unwrap the node's JSON error bodies ({"error":"...","code":1}, sometimes
+   nested) into the plain reason — nobody should ever read raw JSON in red. */
+function humanChainError(e) {
+  let msg = String((e && e.message) || e || 'transaction failed');
+  for (let i = 0; i < 3; i++) {
+    try {
+      const j = JSON.parse(msg);
+      if (j && typeof j.error === 'string') { msg = j.error; continue; }
+      if (j && j.error && typeof j.error.message === 'string') { msg = j.error.message; continue; }
+    } catch (_) {}
+    break;
+  }
+  return msg;
+}
+
+/* A submit error that does NOT prove rejection. The node's own "request
+   timeout: <id>" means ITS REPLY died — the transaction is often accepted
+   and mined anyway (big contract uploads hit this constantly). A real
+   rejection names its reason (insufficient rc, invalid nonce, reverted…). */
+const TRANSIENT_SEND = /request timeout|timed? ?out|unexpected token|invalid json|fetch|network|econn|socket|hang up|abort|bad gateway|gateway time|service unavailable|too many request|(^|[^0-9])(429|500|502|503|504)([^0-9]|$)/i;
+
+/** Broadcast, tolerating an ambiguous reply: on a transient-looking send
+    error the mined-check (waitMined) becomes the arbiter instead of the
+    error. A definitive chain rejection still throws immediately, unwrapped. */
+async function sendTolerant(tx) {
+  try { await tx.send(); }
+  catch (e) {
+    const msg = humanChainError(e);
+    if (!TRANSIENT_SEND.test(msg)) { const err = new Error(msg); err.cause = e; throw err; }
+    // Ambiguous — fall through; waitMined decides whether it landed.
+  }
+}
+
 /** Wait until a broadcast transaction is mined — OUR loop, not koilib's.
     koilib's wait() dies on the first bad RPC answer, and public RPCs
     routinely answer one poll with an HTML error page ("Unexpected token <
@@ -402,13 +435,13 @@ async function devTx(ops) {
     for (const op of ops) await tx.pushOperation(op);
     await tx.prepare();
     await tx.sign();
-    await tx.send();
+    await sendTolerant(tx);
     try { await waitMined(tx.transaction.id); }
     catch (e) {
       /* Mined-confirmation timed out; the transaction may still land.
          The id is carried on the error so a caller that later finds the
          effect DID happen can still record which transaction did it. */
-      const err = new Error(`transaction ${tx.transaction.id} not confirmed: ${e.message || e}`);
+      const err = new Error(`transaction ${tx.transaction.id} not confirmed: ${humanChainError(e)}`);
       err.txId = tx.transaction.id;
       err.broadcast = true;
       throw err;
@@ -438,10 +471,10 @@ async function sendAsAccount(key, ops, { rcLimit = K.rcLimit } = {}) {
     await devSigner().signTransaction(tx.transaction);
     const send = new Transaction({ provider: provider() });
     send.transaction = tx.transaction;
-    await send.send();
+    await sendTolerant(send);
     try { await waitMined(tx.transaction.id); }
     catch (e) {
-      const err = new Error(`transaction ${tx.transaction.id} not confirmed: ${e.message || e}`);
+      const err = new Error(`transaction ${tx.transaction.id} not confirmed: ${humanChainError(e)}`);
       err.txId = tx.transaction.id;
       err.broadcast = true;
       throw err;
@@ -485,10 +518,10 @@ async function submitCosigned(signedTx, preparedId, userAddr) {
     await devSigner().signTransaction(clean);
     const tx = new Transaction({ provider: provider() });
     tx.transaction = clean;
-    await tx.send();
+    await sendTolerant(tx);
     try { await waitMined(clean.id); }
     catch (e) {
-      const err = new Error(`transaction ${clean.id} not confirmed: ${e.message || e}`);
+      const err = new Error(`transaction ${clean.id} not confirmed: ${humanChainError(e)}`);
       err.txId = clean.id;
       err.broadcast = true;
       throw err;
@@ -661,6 +694,13 @@ function newAccount() {
   return { key, address: key.getAddress(), wif: key.getPrivateKey('wif', true) };
 }
 
+/** Rehydrate a held account key (token/collection) from its stored WIF. */
+function keyFromWif(wif) {
+  const key = Signer.fromWif(wif);
+  key.provider = provider();
+  return key;
+}
+
 /** Is this launched token already initialized on-chain? A read, so it
     tells a timed-out-but-mined initialize apart from a real failure. */
 async function tokenInitialized(address) {
@@ -754,7 +794,8 @@ module.exports = {
   opKoinTransfer, opNftMint, opNftSetMetadata, opNftTransfer,
   opTokenTransfer, opTokenMint, opTokenBurn, opUploadContract, opTokenInitialize,
   devTx, sendAsAccount, prepareUserTx, submitCosigned, queueTx,
-  mintNft, mintToCollection, mintManyToCollection, launchToken, launchCollection, newAccount,
+  mintNft, mintToCollection, mintManyToCollection, launchToken, launchCollection, newAccount, keyFromWif,
+  humanChainError,
   tokenInitialized, collectionInitializedAt, allCollectionTokens,
   toDexPrice, dexMarketId, ensureDexMarket, opsDexSell,
   verifyAuthSignature, codeToTokenId, tokenIdToCode,
