@@ -997,7 +997,7 @@ function sendShareHtml(res, html) {
     'Content-Security-Policy': CSP,
     'X-Content-Type-Options': 'nosniff',
   });
-  res.end(html);
+  res.end(stampAssets(html));   // share pages link site.css too — same cache-bust
 }
 
 function sharePageNft(req, res, code) {
@@ -1146,9 +1146,15 @@ function serveStatic(req, res, pathname) {
     }
     const ext = path.extname(file).toLowerCase();
     const isHtml = ext === '.html';
+    /* Code assets (css/js) must never outlive a deploy: a phone holding
+       yesterday's site.css against today's ui.js renders a broken hybrid
+       (that is exactly how Google's raw sign-in iframe ended up visible
+       inside the styled button). They revalidate on every load — cheap 304s
+       when unchanged — while images/fonts keep a day of cache. */
+    const isCode = ext === '.css' || ext === '.js' || ext === '.mjs';
     const headers = {
       'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Cache-Control': isHtml ? 'no-cache' : 'public, max-age=86400',
+      'Cache-Control': (isHtml || isCode) ? 'no-cache' : 'public, max-age=86400',
       ...(isHtml ? {
         'Content-Security-Policy': CSP,
         'X-Content-Type-Options': 'nosniff',
@@ -1157,19 +1163,34 @@ function serveStatic(req, res, pathname) {
     };
     if (isHtml) {
       /* Static pages carry OG tags whose URLs must be ABSOLUTE — inject the
-         request origin into the %%ORIGIN%% placeholders at serve time. */
+         request origin into the %%ORIGIN%% placeholders at serve time. Local
+         css/js URLs get a version stamp so caches that predate the no-cache
+         policy (or any CDN in front) are busted the moment the HTML updates. */
       fs.readFile(file, 'utf8', (rerr, text) => {
         if (rerr) { res.writeHead(500); return res.end(); }
-        const body = Buffer.from(text.replace(/%%ORIGIN%%/g, originFor(req)));
+        const body = Buffer.from(stampAssets(text.replace(/%%ORIGIN%%/g, originFor(req))));
         res.writeHead(200, { ...headers, 'Content-Length': body.length });
         res.end(body);
       });
       return;
     }
+    /* Conditional GET: the no-cache policy means every page load revalidates
+       code assets — answer the common case with an empty 304. */
+    const lastMod = st.mtime.toUTCString();
+    headers['Last-Modified'] = lastMod;
+    if (req.headers['if-modified-since'] === lastMod) {
+      res.writeHead(304, headers); return res.end();
+    }
     res.writeHead(200, { ...headers, 'Content-Length': st.size });
     fs.createReadStream(file).pipe(res);
   });
 }
+
+/* One stamp per server start — appended as ?v= to every local css/js URL in
+   served HTML. Restart (= every deploy) → new URLs → no stale hybrid pages. */
+const ASSET_V = Date.now().toString(36);
+const stampAssets = (html) =>
+  html.replace(/(["'])(\/(?:css|js)\/[^"'?#]+\.(?:css|js))\1/g, (_, q, p) => q + p + '?v=' + ASSET_V + q);
 
 function readBody(req, maxBytes = 128 * 1024) {
   return new Promise((resolve, reject) => {
