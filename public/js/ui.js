@@ -104,6 +104,7 @@ const UI = (() => {
       e.preventDefault();
       if (Wallet.address()) accountMenu(chip); else openLogin();
     });
+    mobileNav();          // the nav links hide ≤720px — give phones a menu
     handleAuthReturn();   // pick up an X (Twitter) redirect if we came back from one
     try {
       const cfg = await Api.config();
@@ -120,6 +121,45 @@ const UI = (() => {
       if (badge) { badge.textContent = 'offline'; badge.classList.add('demo'); }
       return null;
     }
+  }
+
+  /* ---------------- mobile menu ----------------
+     The header nav is display:none under 720px; this builds its phone
+     replacement — a hamburger that folds the same links out of the sticky
+     header. Injected here (not in each page's HTML) so every page gets it. */
+  function mobileNav() {
+    const header = document.querySelector('.site-header');
+    const wrap = header && header.querySelector('.wrap');
+    const nav = header && header.querySelector('.nav');
+    if (!header || !wrap || !nav || document.getElementById('nav-toggle')) return;
+
+    const btn = document.createElement('button');
+    btn.id = 'nav-toggle'; btn.className = 'nav-toggle';
+    btn.setAttribute('aria-label', 'Menu');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.setAttribute('aria-controls', 'mobile-nav');
+    btn.innerHTML = '<span></span><span></span><span></span>';
+    wrap.appendChild(btn);
+
+    const menu = document.createElement('nav');
+    menu.id = 'mobile-nav'; menu.className = 'mobile-nav';
+    menu.setAttribute('aria-label', 'Main');
+    menu.hidden = true;
+    menu.innerHTML = nav.innerHTML;   // the exact same links
+    const here = location.pathname.replace(/\/+$/, '') || '/';
+    for (const a of menu.querySelectorAll('a')) {
+      if (a.getAttribute('href') === here) a.setAttribute('aria-current', 'page');
+    }
+    header.appendChild(menu);
+
+    const setOpen = (open) => {
+      menu.hidden = !open;
+      btn.classList.toggle('open', open);
+      btn.setAttribute('aria-expanded', String(open));
+    };
+    btn.addEventListener('click', () => setOpen(menu.hidden));
+    menu.addEventListener('click', (e) => { if (e.target.closest('a')) setOpen(false); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !menu.hidden) setOpen(false); });
   }
 
   /* ---------------- sign-in modal ---------------- */

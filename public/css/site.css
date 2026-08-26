@@ -99,9 +99,32 @@ code { font-family: var(--font-mono); font-size: .9em; background: var(--bg-inse
 .addr-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; }
 .addr-chip.empty .dot { background: var(--text-dim); }
 
+/* Mobile menu: a hamburger (injected by ui.js) replaces the hidden nav. */
+.nav-toggle {
+  display: none; flex-direction: column; gap: 4px; align-items: center; justify-content: center;
+  width: 40px; height: 40px; flex: none; margin-left: 2px;
+  background: var(--bg-inset); border: 1px solid var(--line-strong); border-radius: 10px;
+  cursor: pointer; padding: 0;
+}
+.nav-toggle span { display: block; width: 16px; height: 2px; background: var(--text-bright); border-radius: 2px; transition: transform .16s, opacity .16s; }
+.nav-toggle.open span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.nav-toggle.open span:nth-child(2) { opacity: 0; }
+.nav-toggle.open span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+.mobile-nav { display: none; }
+.mobile-nav a {
+  display: block; padding: 13px 14px; border-radius: 10px;
+  font-family: var(--font-head); font-weight: 700; color: var(--text-bright);
+}
+.mobile-nav a:hover, .mobile-nav a[aria-current="page"] { background: var(--bg-card); color: var(--accent-soft); }
+
 @media (max-width: 720px) {
   .nav { display: none; }
   .logo span { display: none; }
+  .nav-toggle { display: inline-flex; }
+  .mobile-nav:not([hidden]) {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 6px 14px 12px; border-top: 1px solid var(--line);
+  }
 }
 
 /* ---------------- buttons ---------------- */
