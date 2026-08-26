@@ -98,7 +98,20 @@ initialize({ name, symbol, decimals, supply })  <span class="c">// tx 2 — your
     </div>
   </div>
 
-  <div class="funnel" style="margin-top:50px">
+  <!-- Keep in sync with comparisonHtml() in server.js (the share pages). -->
+  <div class="vs-card" style="margin-top:50px">
+    <h2>None of that was magic — it's architecture</h2>
+    <p class="sub">A real wallet, an on-chain NFT, a deployed token contract — all of it free, from an <strong>empty wallet</strong>. Try that anywhere else:</p>
+    <ul class="vs-list">
+      <li class="no"><span class="mark">❌</span><div class="who"><strong>Ethereum</strong><span class="why">buy ETH before you can touch anything — every click burns gas, and it's gone</span></div></li>
+      <li class="no"><span class="mark">❌</span><div class="who"><strong>Solana</strong><span class="why">hold SOL for fees and rent before your first transaction</span></div></li>
+      <li class="no"><span class="mark">❌</span><div class="who"><strong>Base · BNB · Polygon…</strong><span class="why">cheaper gas is still gas — someone has to buy it first</span></div></li>
+      <li class="yes"><span class="mark">✅</span><div class="who"><strong>Koinos</strong><span class="why">mana recharges like energy and apps can share theirs — a newcomer's first transaction costs nobody anything, ever</span></div></li>
+    </ul>
+    <p class="vs-punch">Holding tokens on chains that charge you to use them? Now you know what you're missing.</p>
+  </div>
+
+  <div class="funnel" style="margin-top:26px">
     <div>
       <h2>Now build the next thing</h2>
       <p>Everything you just used is open source — including this gateway.</p>

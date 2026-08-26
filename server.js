@@ -1028,6 +1028,7 @@ function sharePageNft(req, res, code) {
         <a class="btn big ghost" href="/">How is this free?</a>
       </div>
       ${rec.txid && !rec.demo && explorerTx(rec.txid) ? `<p class="hint" style="margin-top:18px"><a href="${esc(explorerTx(rec.txid))}" target="_blank" rel="noopener">verify it on-chain ↗</a></p>` : ''}
+      ${comparisonHtml('This NFT was minted in a browser by someone with an <strong>empty wallet</strong> — no gas, no signup, no extension.')}
     </div>`;
   sendShareHtml(res, sharePageShell({ origin, path: '/n/' + rec.code, title, desc, ogImage, bodyHtml: body }));
 }
@@ -1056,11 +1057,30 @@ function sharePageToken(req, res, addr) {
         ${rec.dex ? `<a class="btn big ghost" href="https://app.tradekoinos.com/" target="_blank" rel="noopener">Trade it ↗</a>` : `<a class="btn big ghost" href="/">How is this free?</a>`}
       </div>
       ${!rec.demo && explorerAddr(rec.address) ? `<p class="hint" style="margin-top:18px"><a href="${esc(explorerAddr(rec.address))}" target="_blank" rel="noopener">the contract, on-chain ↗</a></p>` : ''}
+      ${comparisonHtml('This is a real token contract, deployed free by someone with an <strong>empty wallet</strong> — no gas, no native coin bought first.')}
     </div>`;
   sendShareHtml(res, sharePageShell({ origin, path: '/t/' + rec.address, title, desc, ogImage: `${origin}/assets/og-card.png`, bodyHtml: body }));
 }
 
 const UIshort = (a) => (a ? String(a).slice(0, 6) + '…' + String(a).slice(-4) : '');
+
+/* The FOMO chart — "that wasn't magic, it's architecture". What this page's
+   action would have cost anywhere else. Shared by the NFT and token share
+   pages; public/build.html carries the same chart statically. */
+function comparisonHtml(claim) {
+  return `
+    <div class="vs-card">
+      <h2>That wasn't magic — it's architecture</h2>
+      <p class="sub">${claim} Try that anywhere else:</p>
+      <ul class="vs-list">
+        <li class="no"><span class="mark">❌</span><div class="who"><strong>Ethereum</strong><span class="why">buy ETH before you can touch anything — every click burns gas, and it's gone</span></div></li>
+        <li class="no"><span class="mark">❌</span><div class="who"><strong>Solana</strong><span class="why">hold SOL for fees and rent before your first transaction</span></div></li>
+        <li class="no"><span class="mark">❌</span><div class="who"><strong>Base · BNB · Polygon…</strong><span class="why">cheaper gas is still gas — someone has to buy it first</span></div></li>
+        <li class="yes"><span class="mark">✅</span><div class="who"><strong>Koinos</strong><span class="why">mana recharges like energy and apps can share theirs — a newcomer's first transaction costs nobody anything, ever</span></div></li>
+      </ul>
+      <p class="vs-punch">Holding tokens on chains that charge you to use them? Now you know what you're missing. <a href="/">Feel it yourself — free →</a></p>
+    </div>`;
+}
 
 /* Raster social card for a painted NFT — rendered once, cached. */
 const OG_CACHE = new Map();

@@ -319,6 +319,33 @@ a.nft:hover { border-color: var(--accent); transform: translateY(-2px); }
 .gallery .nft .by { font-family: var(--font-mono); font-size: .68rem; color: var(--text-dim); }
 .gallery .nft .on-ouro { font-size: .64rem; font-weight: 800; letter-spacing: .05em; color: var(--accent-soft); vertical-align: 1px; }
 
+/* "Only on Koinos" comparison chart (Build page + public share pages). */
+.vs-card {
+  background: var(--bg-card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 26px; text-align: left;
+}
+.vs-card h2 { margin: 0 0 6px; font-size: 1.45rem; }
+.vs-card .sub { margin: 0; color: var(--text-dim); }
+.vs-list { list-style: none; margin: 18px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.vs-list li {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 13px 15px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--bg-inset);
+}
+.vs-list li .mark { flex: none; font-size: 1.05rem; line-height: 1.45; }
+.vs-list li .who { display: flex; flex-direction: column; gap: 2px; }
+.vs-list li strong { font-family: var(--font-head); color: var(--text-bright); }
+.vs-list li .why { color: var(--text-dim); font-size: .92rem; }
+.vs-list li.no { opacity: .82; }
+.vs-list li.yes {
+  border-color: var(--accent);
+  background: linear-gradient(90deg, rgba(120, 39, 230, .24), rgba(142, 68, 173, .12));
+  box-shadow: 0 0 24px rgba(120, 39, 230, .18);
+}
+.vs-list li.yes strong { color: var(--accent-soft); }
+.vs-punch { margin: 16px 0 0; color: var(--text-dim); font-size: .94rem; }
+.vs-punch a { font-weight: 700; }
+
 /* Inline DEX-listing form, mounted in the launch success box. */
 .dex-inline {
   margin-top: 14px; padding: 14px 14px 16px; text-align: left;
