@@ -208,6 +208,14 @@ Two things to know before changing any of this:
   between them by copying. Anything moved in bulk has to be decrypted and
   re-encrypted, never copied.
 
+**Bulk migration** (accounts that have not logged in yet, so lazy adoption has
+not reached them): `tools/import-aurvania-logins.js` does the
+decrypt-verify-re-encrypt move for every Google wallet in Aurvania's
+`logins.json`, all-or-nothing, without ever overwriting an adopted record.
+It is a rehearsal by default and only writes with `--apply`. The header of
+that file is the runbook — including why the gateway must be stopped while
+it runs.
+
 **Enabling X:** create an OAuth 2.0 app at developer.x.com with a **confidential
 client**, add `PUBLIC_ORIGIN/auth/x/callback` as a redirect URI, and set
 `X_CLIENT_ID`, `X_CLIENT_SECRET`, `PUBLIC_ORIGIN` + `LOGIN_SECRET`. The flow is
