@@ -63,9 +63,10 @@
         throw new Error((j && j.error) || `request failed (${res.status})`);
       }
 
-      /* SSE by hand (EventSource can't POST). Frames are the scheduler's
-         own: {delta} while generating, {error} mid-stream, {done} last.
-         A frame can split across network chunks — buffer to blank lines. */
+      /* SSE by hand (EventSource can't POST). Frames are the Koinos AI
+         app's own OpenAI-style chunks — {choices:[{delta:{content}}]} while
+         generating, then "data: [DONE]". A frame can split across network
+         chunks — buffer to blank lines. */
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = '';
@@ -82,12 +83,13 @@
             const data = line.slice(5).trim();
             if (!data || data === '[DONE]') continue;
             let f; try { f = JSON.parse(data); } catch (_) { continue; }
-            if (f.delta) {
-              answer += f.delta;
+            const delta = f.choices?.[0]?.delta?.content ?? f.delta;
+            if (delta) {
+              answer += delta;
               out.textContent = answer;
               log.scrollTop = log.scrollHeight;
             }
-            if (f.error) throw new Error(String(f.error));
+            if (f.error) throw new Error(String(f.error.message || f.error));
           }
         }
       }

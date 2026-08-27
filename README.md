@@ -103,8 +103,9 @@ node server.js
 | `DATA_DIR` | `./data` | where records, keys and uploads live — **point it OUTSIDE the deploy directory** on hosts that wipe the app folder on redeploy (the server also self-heals from the chain, but images can't be rebuilt) |
 | `DEMO_MODE` | — | `1` forces demo mode |
 | **Koinos AI chat** (`/ai`) | | *(optional; the page hides its chat when unset)* |
-| `KAI_CHAT_WIF` | — | key of a **dedicated** Koinos account that pays for visitor chats on the [Koinos AI](https://koinosai.com) network. Make a fresh account for this — never the sponsor wallet: the scheduler bills whatever address signs, so this key's blast radius should be pocket money. Fund it by depositing KAI to that address at the scheduler (its free daily allowance is spent first) |
-| `KAI_SCHEDULER_URL` | `https://koinosai.com/scheduler` | the Koinos AI scheduler the chat signs requests against |
+| `KAI_API_URL` | — | the OpenAI-compatible API of a running [Koinos AI](https://koinosai.com) app — the operator's own computer (the app serves it on port 41100; expose it to this server via a tunnel or port-forward). The app answers through the Koinos AI network and its account is billed per AI token |
+| `KAI_API_KEY` | — | an API key minted in that app (**Local API** view → Create key). Never a wallet key |
+| `KAI_CHAT_MODEL` | `koinos-network` | the model the chat asks the app for; `koinos-network` routes to the network's best live class |
 | `MAX_CHATS_PER_DAY` | `400` | global daily visitor-chat budget (plus 6/min and 60/day per IP built in) |
 | **Social login** | | *(all optional; Local Wallet + Import always work)* |
 | `GOOGLE_CLIENT_ID` | *(inherited)* | **Aurvania's** Google OAuth client ID (`…apps.googleusercontent.com`). Enables the Google button, which opens the **same wallet as Aurvania & OURO**. Leave unset to inherit it from Aurvania at boot. Works with or without `LOGIN_SECRET` — see [Google custody](#google-bridged-or-held-here) |

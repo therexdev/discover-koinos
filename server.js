@@ -100,18 +100,20 @@ const CFG = {
   maxUploadBytes: parseInt(process.env.MAX_UPLOAD_BYTES || String(3 * 1024 * 1024), 10),
 
   /* Koinos AI visitor chat. Answered by the Koinos AI NETWORK — volunteer
-     machines earning KOIN — never by this box, which only signs and relays.
-     KAI_CHAT_WIF is a DEDICATED Koinos account whose only job is paying for
-     AI tokens at the scheduler (free daily allowance first, then deposited
-     KAI). Keep it separate from the sponsor wallet on purpose: a leaked
-     chat key should cost pocket money, not the mint sponsor. Unset ⇒ the
+     machines earning KOIN — never by this box, which only relays. The
+     answers come through the owner's OWN Koinos AI app: KAI_API_URL points
+     at the app's API on their computer (default port 41100, through
+     whatever tunnel or port-forward exposes it) and KAI_API_KEY is an API
+     key minted in the app — never a wallet key. The app signs network
+     requests itself and its account is billed per AI token. Unset ⇒ the
      chat page says the feature is off and nothing else changes. */
-  kaiChatWif: process.env.KAI_CHAT_WIF || '',
-  kaiScheduler: (process.env.KAI_SCHEDULER_URL || 'https://koinosai.com/scheduler').replace(/\/+$/, ''),
+  kaiApiUrl: process.env.KAI_API_URL || '',
+  kaiApiKey: process.env.KAI_API_KEY || '',
+  kaiChatModel: process.env.KAI_CHAT_MODEL || 'koinos-network',
   maxChatsPerDay: parseInt(process.env.MAX_CHATS_PER_DAY || '400', 10),
 };
 
-kaiChat.configure({ wif: CFG.kaiChatWif, scheduler: CFG.kaiScheduler });
+kaiChat.configure({ url: CFG.kaiApiUrl, key: CFG.kaiApiKey, model: CFG.kaiChatModel });
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 /* DATA_DIR can live OUTSIDE the deploy directory (env DATA_DIR) — a git
@@ -1322,13 +1324,14 @@ function serveUpload(req, res, pathname) {
   });
 }
 
-/* POST /api/ai-chat {question, history?} → SSE. The visitor's question goes
-   to the Koinos AI network as a wallet-signed paid request and the answer
-   streams back word by word. Spending controls live HERE, before any money
-   moves: per-IP pacing, a per-IP daily cap, and a site-wide daily budget on
-   the same reserveDaily used for mints — reserved synchronously so a burst
-   can't sail past the ceiling together, refunded when no tokens were
-   bought. The system prompt and history bounds are kai-chat.js's job. */
+/* POST /api/ai-chat {question, history?} → SSE. The visitor's question is
+   relayed to the owner's own Koinos AI app, which answers through the
+   network and gets billed per AI token — so spending controls live HERE,
+   before the relay: per-IP pacing, a per-IP daily cap, and a site-wide
+   daily budget on the same reserveDaily used for mints — reserved
+   synchronously so a burst can't sail past the ceiling together, refunded
+   when no answer was generated. The system prompt and history bounds are
+   kai-chat.js's job. */
 async function handleAiChat(req, res) {
   if (!kaiChat.enabled()) throw httpError(503, 'AI chat is not switched on for this server');
   const ip = clientIp(req);
@@ -1348,19 +1351,21 @@ async function handleAiChat(req, res) {
     try {
       upstream = await kaiChat.requestChat(messages);
     } catch (e) {
-      console.error(`[${new Date().toISOString()}] ai-chat: scheduler unreachable -`, String(e.message || e).slice(0, 200));
-      throw httpError(502, 'the Koinos AI network did not answer — try again in a moment');
+      /* The upstream is one real computer running Koinos AI. Unreachable
+         means it is off or the tunnel is down — say so honestly. */
+      console.error(`[${new Date().toISOString()}] ai-chat: app unreachable -`, String(e.message || e).slice(0, 200));
+      throw httpError(503, 'the Koinos AI node this chat runs on is offline right now — try again later');
     }
     if (!upstream.ok) {
-      /* The scheduler's own messages name balances and accounts — log them
-         for the operator, hand the visitor something they can act on. 402 is
-         the chat account out of allowance+credits (operator's problem, not
-         the visitor's); 503 is "no providers online right now" (honest). */
+      /* The app's own messages can name keys, balances and accounts — log
+         them for the operator, hand the visitor something they can act on.
+         401/403 is a bad or missing API key (operator's problem, not the
+         visitor's). */
       const uj = await upstream.json().catch(() => null);
       const detail = uj?.error?.message || `HTTP ${upstream.status}`;
-      console.error(`[${new Date().toISOString()}] ai-chat: scheduler refused -`, String(detail).slice(0, 300));
-      if (upstream.status === 402) throw httpError(503, "the site's AI allowance for today ran out — try again after midnight UTC");
-      if (upstream.status === 503) throw httpError(503, 'no machines on the Koinos AI network are free right now — try again in a minute');
+      console.error(`[${new Date().toISOString()}] ai-chat: app refused -`, String(detail).slice(0, 300));
+      if (upstream.status === 401 || upstream.status === 403) throw httpError(503, 'the chat is misconfigured on this site — the operator has been notified in the logs');
+      if (upstream.status === 402) throw httpError(503, "the site's AI allowance for today ran out — try again later");
       throw httpError(502, 'the Koinos AI network could not take that question — try again in a moment');
     }
 
@@ -1370,10 +1375,11 @@ async function handleAiChat(req, res) {
       'Cache-Control': 'no-store',
       Connection: 'keep-alive',
     });
-    /* Relay the scheduler's SSE frames untouched ({delta}, {error},
-       {done, usage}) — the page understands them directly. Cancel upstream
-       if the visitor leaves: the network worker stops generating and the
-       chat account stops paying for words nobody will read. */
+    /* Relay the app's SSE frames untouched (OpenAI-style
+       chat.completion.chunk lines ending in "data: [DONE]") — the page
+       understands them directly. Cancel upstream if the visitor leaves:
+       generation stops and the app's account stops paying for words nobody
+       will read. */
     const reader = upstream.body.getReader();
     let gone = false;
     res.on('close', () => { gone = true; reader.cancel().catch(() => {}); });
