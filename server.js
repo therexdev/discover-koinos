@@ -1607,10 +1607,23 @@ const server = http.createServer(async (req, res) => {
           const info = await chain.collectionInfo();
           if (/^Uninitialized/.test(info.name || '')) {
             /* Deployed but never initialized — this is what OURO (and every
-               chain reader) shows as an unnamed collection. The deploy
-               script's initialize step retries safely. */
-            console.log(`paint:    WARNING — ${CFG.collectionAddr} is deployed but NOT initialized (name/symbol unset).`);
-            console.log(`paint:    Fix: KOINOS_NETWORK=${CFG.network} node scripts/deploy-playground.js gateway.env  (idempotent — it will only run the missing initialize)`);
+               chain reader) shows as an unnamed collection. We HOLD the
+               collection key, so finish the setup ourselves, in the
+               background — serving never waits on it. */
+            console.log(`paint:    ${CFG.collectionAddr} deployed but NOT initialized — finishing its setup now…`);
+            (async () => {
+              await chain.initializeCollectionAt(CFG.collectionAddr, chain.keyFromWif(CFG.collectionWif), {
+                name: PAINT_NAME, symbol: 'PAINT', uri: '',
+                description: 'Pixel art minted first-hand by Koinos newcomers at the Discover Koinos gateway.',
+                owner: chain.devAddress(), royaltyBps: 0,
+              });
+              const fixed = await chain.collectionInfo();
+              console.log(`paint:    setup finished — "${fixed.name}" (${fixed.symbol}); OURO shows it within ~5 minutes`);
+              registerPaintCollection(fixed);
+            })().catch((e) => {
+              console.log(`paint:    self-initialize failed — ${e.message}`);
+              console.log(`paint:    fallback: KOINOS_NETWORK=${CFG.network} node scripts/deploy-playground.js gateway.env`);
+            });
           } else {
             console.log(`paint:    ${CFG.collectionAddr} "${info.name || '?'}" (${info.symbol || '?'})`);
             registerPaintCollection(info);

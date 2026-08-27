@@ -588,6 +588,24 @@ async function launchCollection(spec, wasmBuffer, key) {
     uploadTx = e.txId || null;
   }
 
+  let initTx;
+  try { initTx = await initializeCollectionAt(address, key, spec); }
+  catch (e) {
+    const err = new Error(`collection deployed at ${address} but initialize failed: ${e.message || e}`);
+    err.address = address;
+    err.uploadTx = uploadTx;
+    throw err;
+  }
+  return { address, uploadTx, initTx };
+}
+
+/** Initialize — or FINISH initializing — a deployed KCS-2 collection whose
+    key we hold. Retries; a timed-out-but-mined attempt is detected by
+    re-reading the on-chain name, and an already-done collection resolves
+    as 'confirmed'. This is how a Paint collection stranded as
+    "Uninitialized collection" heals without a redeploy. */
+async function initializeCollectionAt(address, key, spec) {
+  key.provider = provider();
   let initTx = null, lastErr = null;
   for (let attempt = 0; attempt < 4; attempt++) {
     if (attempt) await new Promise(r => setTimeout(r, 4000 + attempt * 2000));
@@ -607,13 +625,8 @@ async function launchCollection(spec, wasmBuffer, key) {
       if (/already been set up/i.test(String(e.message || e))) { initTx = initTx || 'confirmed'; lastErr = null; break; }
     }
   }
-  if (lastErr) {
-    const err = new Error(`collection deployed at ${address} but initialize failed: ${lastErr.message || lastErr}`);
-    err.address = address;
-    err.uploadTx = uploadTx;
-    throw err;
-  }
-  return { address, uploadTx, initTx };
+  if (lastErr) throw lastErr;
+  return initTx;
 }
 
 /* ---------------- Trade Koinos DEX (orderbook) ----------------
@@ -796,7 +809,7 @@ module.exports = {
   devTx, sendAsAccount, prepareUserTx, submitCosigned, queueTx,
   mintNft, mintToCollection, mintManyToCollection, launchToken, launchCollection, newAccount, keyFromWif,
   humanChainError,
-  tokenInitialized, collectionInitializedAt, allCollectionTokens,
+  tokenInitialized, collectionInitializedAt, initializeCollectionAt, allCollectionTokens,
   toDexPrice, dexMarketId, ensureDexMarket, opsDexSell,
   verifyAuthSignature, codeToTokenId, tokenIdToCode,
   COLLECTION_ABI, TOKEN_ABI, KOIN_ABI, ORDERBOOK_ABI,
