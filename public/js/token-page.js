@@ -24,7 +24,7 @@
       if (a.tokens.length) {
         $('#my-tokens tbody').innerHTML = a.tokens.map(t => `
           <tr>
-            <td><span class="sym">${escapeHtml(t.symbol)}</span> ${escapeHtml(t.name)}</td>
+            <td><a href="/t/${encodeURIComponent(t.address)}" title="Its token page"><span class="sym">${escapeHtml(t.symbol)}</span> ${escapeHtml(t.name)}</a></td>
             <td>${escapeHtml(fmtUnits(t.balance ?? t.supplyUnits, t.decimals))}</td>
             <td>${addrLink(t.address)}</td>
             <td>${t.dex
@@ -83,6 +83,7 @@
     return s;
   }
 
+  const logoPick = UI.logoPicker($('#tok-logo'), { label: 'Coin logo — optional' });
   $('#btn-launch').addEventListener('click', async () => {
     const btn = $('#btn-launch');
     const name = $('#tok-name').value.trim();
@@ -108,7 +109,7 @@
       st.next();
       const proof = await Wallet.proof('launch-token');
       st.next();
-      const r = await Api.launchToken({ ...proof, name, symbol, supply, decimals, mintable });
+      const r = await Api.launchToken({ ...proof, name, symbol, supply, decimals, mintable, logo: logoPick.dataUrl() || undefined });
       st.next();
       st.done(
         `<div class="txline">contract: ${r.explorer ? `<a href="${escapeHtml(r.explorer)}" target="_blank" rel="noopener">${escapeHtml(r.address)}</a>` : escapeHtml(r.address)}</div>`
@@ -122,7 +123,7 @@
       }
       UI.markDone('token');
       toast(`${symbol} is live — ${r.supply} in your wallet`, 'ok');
-      Share.celebrate('token', { url: r.shareUrl, symbol });
+      Share.celebrate('token', { url: r.shareUrl, symbol, image: r.image || undefined });
       loadMine(); loadCommunity();
     } catch (e) {
       st.fail(e.message);

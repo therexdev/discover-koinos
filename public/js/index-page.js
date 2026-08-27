@@ -105,6 +105,7 @@
   });
 
   /* ---- token card ---- */
+  const logoPick = UI.logoPicker($('#tok-logo'), { label: 'Coin logo — optional' });
   $('#btn-launch').addEventListener('click', async () => {
     const btn = $('#btn-launch');
     const name = $('#tok-name').value.trim();
@@ -128,7 +129,7 @@
       st.next();
       const proof = await Wallet.proof('launch-token');
       st.next();
-      const r = await Api.launchToken({ ...proof, name, symbol, supply, decimals: 8, mintable });
+      const r = await Api.launchToken({ ...proof, name, symbol, supply, decimals: 8, mintable, logo: logoPick.dataUrl() || undefined });
       st.next();
       const cfg = UI.config();
       st.done(
@@ -143,7 +144,7 @@
       }
       UI.markDone('token');
       toast(`${symbol} is live — ${r.supply} in your wallet`, 'ok');
-      Share.celebrate('token', { url: r.shareUrl, symbol });
+      Share.celebrate('token', { url: r.shareUrl, symbol, image: r.image || undefined });
     } catch (e) {
       st.fail(e.message);
     } finally {
@@ -155,10 +156,10 @@
   $('#funnel-btn').addEventListener('click', () => UI.markDone('build'));
 
   /* ---- community gallery + activity feed ----
-     NFT tiles open the piece on OURO (its live marketplace page) when the
-     collection is registered there, else our own share page. Below the
-     grid: fresh tokens (→ explorer), DEX listings (→ the pair on Trade
-     Koinos) and new collections (→ OURO). */
+     Everything links to ITS OWN page here (/n/<code>, /t/<addr>) — the page
+     that shows the piece plus its details, with the external links (OURO,
+     KoinosBlocks, Trade Koinos) waiting at the bottom of that page.
+     Collections have no local page, so their chips go to OURO. */
   async function loadGallery() {
     try {
       const g = await Api.gallery();
@@ -167,22 +168,20 @@
       if (!items.length) {
         host.innerHTML = '<p class="sub">Nothing here yet — yours could be the first.</p>';
       } else {
-        host.innerHTML = items.map(n => {
-          const href = n.ouroUrl || ('/n/' + encodeURIComponent(n.code));
-          return `
-          <a class="nft" href="${escapeHtml(href)}" target="_blank" rel="noopener" title="${n.ouroUrl ? 'View on OURO' : 'View'}">
+        host.innerHTML = items.map(n => `
+          <a class="nft" href="/n/${encodeURIComponent(n.code)}" title="Its page — details, share card, marketplace links">
             <img src="${escapeHtml(n.image)}" alt="${escapeHtml(n.name)}">
-            <div class="nm">${escapeHtml(n.name)}${n.ouroUrl ? ' <span class="on-ouro">OURO ↗</span>' : ''}</div>
+            <div class="nm">${escapeHtml(n.name)}</div>
             <div class="by">${escapeHtml(n.code)} · ${UI.short(n.owner)}</div>
-          </a>`;
-        }).join('');
+          </a>`).join('');
       }
 
       // One merged, newest-first strip of everything else that happened.
       const events = [];
       for (const t of (g.tokens || [])) {
-        events.push({ ts: t.ts, icon: '🪙', label: `$${t.symbol} launched`, href: t.explorerUrl, hint: 'View the contract on KoinosBlocks' });
-        if (t.dex) events.push({ ts: t.dex.ts || t.ts, icon: '📈', label: `$${t.symbol} live on the DEX`, href: t.dexUrl, hint: 'Trade it on Trade Koinos' });
+        const page = '/t/' + encodeURIComponent(t.address);
+        events.push({ ts: t.ts, icon: '🪙', label: `$${t.symbol} launched`, href: page, hint: 'Its token page — details and links', local: true });
+        if (t.dex) events.push({ ts: t.dex.ts || t.ts, icon: '📈', label: `$${t.symbol} live on the DEX`, href: page, hint: 'Its token page — trade link at the bottom', local: true });
       }
       for (const c of (g.collections || [])) {
         events.push({ ts: c.ts || 0, icon: '🖼️', label: `${c.name} collection`, href: c.ouroUrl, hint: 'Browse it on OURO' });
@@ -193,7 +192,7 @@
         feed.innerHTML = events.slice(0, 12).map(ev => {
           const inner = `<span aria-hidden="true">${ev.icon}</span> ${escapeHtml(ev.label)}`;
           return ev.href
-            ? `<a class="feed-chip" href="${escapeHtml(ev.href)}" target="_blank" rel="noopener" title="${escapeHtml(ev.hint)}">${inner} <span class="go">↗</span></a>`
+            ? `<a class="feed-chip" href="${escapeHtml(ev.href)}"${ev.local ? '' : ' target="_blank" rel="noopener"'} title="${escapeHtml(ev.hint)}">${inner}${ev.local ? '' : ' <span class="go">↗</span>'}</a>`
             : `<span class="feed-chip">${inner}</span>`;
         }).join('');
       }

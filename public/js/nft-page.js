@@ -64,9 +64,9 @@
       const host = $('#my-gallery');
       if (a.nfts.length) {
         host.innerHTML = a.nfts.slice().reverse().map(n => `
-          <a class="nft" href="${escapeHtml(n.ouroUrl || ('/n/' + encodeURIComponent(n.code || '')))}" target="_blank" rel="noopener" title="${n.ouroUrl ? 'View on OURO' : 'View'}">
+          <a class="nft" href="/n/${encodeURIComponent(n.code || '')}" title="Its page — details, share card, marketplace links">
             <img src="${escapeHtml(n.image)}" alt="${escapeHtml(n.name)}" loading="lazy">
-            <div class="nm">${escapeHtml(n.name)}${n.ouroUrl ? ' <span class="on-ouro">OURO ↗</span>' : ''}</div>
+            <div class="nm">${escapeHtml(n.name)}</div>
             <div class="by">${escapeHtml(n.collectionName || n.code || '')}</div>
           </a>`).join('');
       }
@@ -81,9 +81,9 @@
       const g = await Api.gallery();
       const host = $('#community-gallery');
       host.innerHTML = g.nfts.length ? g.nfts.map(n => `
-        <a class="nft" href="${escapeHtml(n.ouroUrl || ('/n/' + encodeURIComponent(n.code || '')))}" target="_blank" rel="noopener" title="${n.ouroUrl ? 'View on OURO' : 'View'}">
+        <a class="nft" href="/n/${encodeURIComponent(n.code || '')}" title="Its page — details, share card, marketplace links">
           <img src="${escapeHtml(n.image)}" alt="${escapeHtml(n.name)}" loading="lazy">
-          <div class="nm">${escapeHtml(n.name)}${n.ouroUrl ? ' <span class="on-ouro">OURO ↗</span>' : ''}</div>
+          <div class="nm">${escapeHtml(n.name)}</div>
           <div class="by">${escapeHtml(n.collectionName || n.code || '')} · ${UI.short(n.owner)}</div>
         </a>`).join('')
         : '<p class="sub">Nothing here yet — yours could be the first.</p>';
