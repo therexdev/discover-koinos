@@ -49,7 +49,18 @@
     addMsg('you', 'You').textContent = question;
     input.value = '';
     const out = addMsg('bot', 'Koinos AI');
-    out.innerHTML = '<span class="chat-thinking">finding a machine on the network…</span>';
+    const think = (t) => { out.innerHTML = '<span class="chat-thinking"></span>'; out.firstChild.textContent = t; };
+    think('finding a machine on the network…');
+
+    /* Honest patience: a machine that has been quiet loads its model before
+       the first word, which can take a minute or two. Say so instead of
+       looking frozen — and give up cleanly rather than never. */
+    const waitNotes = [
+      setTimeout(() => { if (!answer) think('a machine is warming up its model — first answers can take a minute…'); }, 15000),
+      setTimeout(() => { if (!answer) think('still working — the machine is loading a large model, hang tight…'); }, 60000),
+    ];
+    const ctrl = new AbortController();
+    const giveUp = setTimeout(() => ctrl.abort(), 170000);
 
     let answer = '';
     try {
@@ -57,6 +68,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question, history }),
+        signal: ctrl.signal,
       });
       if (!res.ok) {
         const j = await res.json().catch(() => null);
@@ -98,13 +110,18 @@
     } catch (err) {
       /* Keep whatever streamed before the failure — half an answer plus an
          honest note beats a blank bubble. */
+      const msg = err && err.name === 'AbortError'
+        ? 'the network took too long this time — please ask again'
+        : String(err.message || err);
       const note = document.createElement('div');
       note.className = 'chat-err';
-      note.textContent = String(err.message || err);
+      note.textContent = msg;
       if (!answer) out.textContent = '';
       out.parentElement.appendChild(note);
-      toast(String(err.message || err), 'err');
+      toast(msg, 'err');
     } finally {
+      waitNotes.forEach(clearTimeout);
+      clearTimeout(giveUp);
       busy = false; send.disabled = false; input.disabled = false;
       input.focus();
     }
