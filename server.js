@@ -1414,7 +1414,19 @@ async function handleAiChat(req, res) {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-store',
       Connection: 'keep-alive',
+      /* Field finding (first live question, 2026-08-27): this site sits
+         behind Hostinger's proxy, which buffers responses unless told not
+         to — the visitor stared at "finding a machine…" while the answer
+         sat in a buffer. LiteSpeed/nginx both honor this header. */
+      'X-Accel-Buffering': 'no',
     });
+    /* Open the stream NOW and keep it visibly alive: an SSE comment frame
+       reaches the browser immediately (the page skips non-data frames),
+       and a heartbeat every 10s stops proxies from buffering or idling out
+       the response while a cold network machine loads its model — the
+       first answer after quiet can genuinely take a minute or two. */
+    res.write(':connected\n\n');
+    const heartbeat = setInterval(() => { try { res.write(':hb\n\n'); } catch (_) { /* gone */ } }, 10000);
     /* Relay the app's SSE frames untouched (OpenAI-style
        chat.completion.chunk lines ending in "data: [DONE]") — the page
        understands them directly. Cancel upstream if the visitor leaves:
@@ -1422,7 +1434,7 @@ async function handleAiChat(req, res) {
        will read. */
     const reader = upstream.body.getReader();
     let gone = false;
-    res.on('close', () => { gone = true; reader.cancel().catch(() => {}); });
+    res.on('close', () => { gone = true; clearInterval(heartbeat); reader.cancel().catch(() => {}); });
     try {
       for (;;) {
         const { value, done } = await reader.read();
@@ -1431,6 +1443,8 @@ async function handleAiChat(req, res) {
       }
     } catch (e) {
       if (!gone) console.error(`[${new Date().toISOString()}] ai-chat: stream broke -`, String(e.message || e).slice(0, 200));
+    } finally {
+      clearInterval(heartbeat);
     }
     return res.end();
   } finally {
