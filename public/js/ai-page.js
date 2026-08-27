@@ -12,6 +12,7 @@
   const form = $('#chat-form');
   const input = $('#chat-input');
   const send = $('#chat-send');
+  const modelSel = $('#chat-model');
   if (!form) return;
 
   /* This tab's transcript, replayed to the server so the bot has context.
@@ -68,7 +69,7 @@
       const res = await fetch('/api/ai-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, history }),
+        body: JSON.stringify({ question, history, model: modelSel ? modelSel.value : undefined }),
         signal: ctrl.signal,
       });
       if (!res.ok) {

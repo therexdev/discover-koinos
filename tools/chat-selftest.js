@@ -123,6 +123,51 @@ async function test(name, fn) {
     }
   });
 
+  await test('model choices map through the closed list; junk falls back to the default', async () => {
+    const seen = [];
+    const stub = http.createServer((req, res) => {
+      let raw = '';
+      req.on('data', c => { raw += c; });
+      req.on('end', () => {
+        seen.push(JSON.parse(raw).model);
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.end('data: [DONE]\n\n');
+      });
+    });
+    await new Promise(r => stub.listen(0, '127.0.0.1', r));
+    try {
+      kaiChat.configure({ url: `http://127.0.0.1:${stub.address().port}`, key: 'k', model: 'koinos-network:koinos-balanced' });
+      const m = kaiChat.buildMessages('hi', []);
+      await kaiChat.requestChat(m, 'koinos-smart');            // a listed choice pins its class
+      await kaiChat.requestChat(m);                            // no choice → default
+      await kaiChat.requestChat(m, 'deepseek-r1-32b');         // pricier class NOT on the list → default
+      await kaiChat.requestChat(m, { evil: true });            // junk type → default
+      assert.deepStrictEqual(seen, [
+        'koinos-network:koinos-smart',
+        'koinos-network:koinos-balanced',
+        'koinos-network:koinos-balanced',
+        'koinos-network:koinos-balanced',
+      ]);
+      // the page's dropdown and the server's list must agree
+      assert.deepStrictEqual(kaiChat.MODEL_CHOICES.map(c => c.id), ['koinos-fast', 'koinos-balanced', 'koinos-smart']);
+    } finally {
+      stub.close();
+    }
+  });
+
+  await test('the ai.html dropdown offers exactly the served choices, balanced preselected', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'ai.html'), 'utf8');
+    const sel = html.match(/<select id="chat-model"[\s\S]*?<\/select>/);
+    assert.ok(sel, 'no #chat-model select in ai.html');
+    const opts = [...sel[0].matchAll(/<option value="([^"]+)"( selected)?/g)];
+    assert.deepStrictEqual(opts.map(o => o[1]), kaiChat.MODEL_CHOICES.map(c => c.id),
+      'dropdown options diverge from MODEL_CHOICES');
+    assert.deepStrictEqual(opts.filter(o => o[2]).map(o => o[1]), ['koinos-balanced'],
+      'balanced must be the one preselected option');
+  });
+
   await test('static chat bubbles in ai.html are single-line (pre-wrap renders source newlines)', () => {
     const fs = require('node:fs');
     const path = require('node:path');

@@ -51,6 +51,12 @@
     <form class="chat-form" id="chat-form">
       <input id="chat-input" type="text" maxlength="500" autocomplete="off"
              placeholder="Why doesn't Koinos charge gas fees?" aria-label="Your question" required>
+      <select id="chat-model" aria-label="Which network model answers"
+              title="Pick the model that answers — Fast is snappiest, Smart thinks hardest">
+        <option value="koinos-fast">⚡ Fast</option>
+        <option value="koinos-balanced" selected>⚖️ Balanced</option>
+        <option value="koinos-smart">🧠 Smart</option>
+      </select>
       <button class="btn" id="chat-send" type="submit">Ask</button>
     </form>
     <p class="chat-note" id="chat-note">Answers come from independent machines on the network — helpful, but
@@ -64,7 +70,7 @@
     <p class="sub">This chat is the Koinos AI marketplace working end to end:</p>
     <ul class="vs-list">
       <li class="yes"><span class="mark">1.</span><div class="who"><strong>Your question goes to a real Koinos AI node</strong><span class="why">the same app anyone can run — it pays the network per AI token, like mana for intelligence</span></div></li>
-      <li class="yes"><span class="mark">2.</span><div class="who"><strong>The scheduler picks a machine</strong><span class="why">the best model any volunteer computer is serving right now</span></div></li>
+      <li class="yes"><span class="mark">2.</span><div class="who"><strong>The scheduler picks a machine</strong><span class="why">whichever volunteer computer is serving the model you picked</span></div></li>
       <li class="yes"><span class="mark">3.</span><div class="who"><strong>That machine earns KOIN</strong><span class="why">its owner installed one app and their spare computer became income</span></div></li>
     </ul>
     <p class="vs-punch">Your PC could be the one answering. <a href="https://koinosai.com" target="_blank" rel="noopener">Run Koinos AI and start earning →</a></p>
