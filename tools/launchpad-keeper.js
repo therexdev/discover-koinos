@@ -1,0 +1,206 @@
+/* ============================================================
+   Launchpad keeper — the off-chain half of auto-settlement.
+
+   Koinos contracts cannot wake themselves up: somebody has to send the
+   finalize / payout / unlock transactions once a launch's clock runs out.
+   That somebody is this loop, and the mana comes from the gateway's
+   sponsor wallet (the same mana sharer that pays for mints and launches),
+   so neither creators nor buyers ever pay for settlement.
+
+   Every cycle it reads the launchpad contract and acts on what it sees:
+
+     ACTIVE past its end (or a FIXED sale sold out early)  -> finalize
+     DISTRIBUTING / REFUNDING                              -> process batches
+     COMPLETED with an expired lock                        -> claim_locked
+
+   Everything it calls is permissionless-by-design on the contract side
+   (finalize/process/claim_locked are callable by anyone and always pay
+   the rightful recipient), so the keeper holds no special authority —
+   losing this loop only ever DELAYS settlement, it can never redirect it.
+
+   Failures back off per launch (2, 4, 8 ... 60 minutes) so one broken
+   token contract cannot spin the loop or drain sponsor mana, and a mana
+   floor keeps settlement from eating the budget interactive actions need.
+   ============================================================ */
+'use strict';
+
+const STATUS_ACTIVE = 0;
+const STATUS_DISTRIBUTING = 1;
+const STATUS_COMPLETED = 2;
+const STATUS_REFUNDING = 3;
+const MODE_FIXED = 0;
+
+/* Chain timestamps are ms; act a little late rather than a second early
+   (an early finalize just reverts and wastes a transaction). */
+const CLOCK_SLACK_MS = 5000;
+
+/* Buyers settled per process() transaction (contract caps at 30) and
+   batches per launch per cycle — 5 x 20 = 100 buyers a cycle keeps even a
+   big launch settling briskly without monopolizing the sponsor wallet. */
+const PROCESS_BATCH = 20;
+const MAX_BATCHES_PER_CYCLE = 5;
+
+/* Reads page at the contract's limit. */
+const PAGE = 100;
+
+function createLaunchpadKeeper(opts) {
+  const chain = opts.chain;                 // tools/koinos.js module
+  const log = opts.log || ((m) => console.log(m));
+  const intervalMs = opts.intervalMs || 45000;
+  /* Refuse to settle when sponsor mana drops under this (KOIN) — the same
+     idea as the server's minManaAction floor. */
+  const manaFloor = opts.manaFloor != null ? opts.manaFloor : 6;
+
+  const backoff = new Map(); // launch id -> { fails, until }
+  let timer = null;
+  let cycling = false;
+
+  const skipping = (id) => {
+    const entry = backoff.get(id);
+    return !!(entry && Date.now() < entry.until);
+  };
+  const failed = (id, what, error) => {
+    const entry = backoff.get(id) || { fails: 0, until: 0 };
+    entry.fails += 1;
+    const wait = Math.min(60, 2 ** entry.fails) * 60000;
+    entry.until = Date.now() + wait;
+    backoff.set(id, entry);
+    log(`keeper:   launch #${id} ${what} failed — ${error.message} (next try in ${Math.round(wait / 60000)}m)`);
+  };
+  const succeeded = (id) => backoff.delete(id);
+
+  async function manaOk() {
+    try {
+      const live = await chain.mana(chain.devAddress());
+      if (live >= manaFloor) return true;
+      log(`keeper:   paused — sponsor mana ${Math.floor(live)} under the ${manaFloor} floor`);
+      return false;
+    } catch (_) {
+      return false; // chain unreadable: try again next cycle
+    }
+  }
+
+  async function readLaunches() {
+    const all = [];
+    let start = 0;
+    for (;;) {
+      const { result } = await chain
+        .launchpadContract()
+        .functions.get_launches({ start, limit: PAGE });
+      const page = (result && result.launches) || [];
+      all.push(...page);
+      if (page.length < PAGE) break;
+      start = Number(page[page.length - 1].id);
+    }
+    return all;
+  }
+
+  const num = (v) => Number(v || 0);
+
+  async function settleOne(launch) {
+    const id = Number(launch.id);
+    const now = Date.now();
+    const status = num(launch.status);
+
+    if (status === STATUS_ACTIVE) {
+      const ended = now >= num(launch.endTime) + CLOCK_SLACK_MS;
+      const soldOut =
+        num(launch.mode) === MODE_FIXED &&
+        num(launch.forSaleAmount) > 0 &&
+        BigInt(launch.sold || 0) >= BigInt(launch.forSaleAmount || 0);
+      if (!ended && !soldOut) return false;
+      const { operation } = await chain
+        .launchpadContract(chain.devSigner())
+        .functions.finalize({ launchId: id }, { onlyOperation: true });
+      await chain.devTx([operation]);
+      log(`keeper:   launch #${id} finalized`);
+      return true;
+    }
+
+    if (status === STATUS_DISTRIBUTING || status === STATUS_REFUNDING) {
+      const verb = status === STATUS_DISTRIBUTING ? 'paid out' : 'refunded';
+      for (let batch = 0; batch < MAX_BATCHES_PER_CYCLE; batch++) {
+        const { operation } = await chain
+          .launchpadContract(chain.devSigner())
+          .functions.process(
+            { launchId: id, limit: PROCESS_BATCH },
+            { onlyOperation: true }
+          );
+        await chain.devTx([operation]);
+        const { result } = await chain
+          .launchpadContract()
+          .functions.get_launch({ launchId: id });
+        const fresh = result && result.value;
+        if (!fresh) break;
+        const pending =
+          num(fresh.buyerCount) - num(fresh.cursor);
+        if (num(fresh.status) !== status || pending <= 0) {
+          log(`keeper:   launch #${id} fully ${verb} (${num(fresh.buyerCount)} buyers)`);
+          return true;
+        }
+        log(`keeper:   launch #${id} ${verb} batch done, ${pending} buyer(s) left`);
+        if (!(await manaOk())) return true;
+      }
+      return true;
+    }
+
+    if (status === STATUS_COMPLETED) {
+      if (
+        BigInt(launch.lockedAmount || 0) > 0n &&
+        !launch.lockedClaimed &&
+        now >= num(launch.unlockTime) + CLOCK_SLACK_MS
+      ) {
+        const { operation } = await chain
+          .launchpadContract(chain.devSigner())
+          .functions.claim_locked({ launchId: id }, { onlyOperation: true });
+        await chain.devTx([operation]);
+        log(`keeper:   launch #${id} locked tokens delivered to creator`);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  async function cycle() {
+    if (cycling || !chain.launchpadEnabled()) return;
+    cycling = true;
+    try {
+      const launches = await readLaunches();
+      for (const launch of launches) {
+        const id = Number(launch.id);
+        if (skipping(id)) continue;
+        let acted = false;
+        try {
+          acted = await settleOne(launch);
+          if (acted) succeeded(id);
+        } catch (error) {
+          failed(id, 'settlement', error);
+        }
+        if (acted && !(await manaOk())) break;
+      }
+    } catch (error) {
+      log(`keeper:   cycle skipped — ${error.message}`);
+    } finally {
+      cycling = false;
+    }
+  }
+
+  return {
+    start() {
+      if (timer) return;
+      timer = setInterval(() => void cycle(), intervalMs);
+      if (timer.unref) timer.unref();
+      // first look shortly after boot, once the chain config has settled
+      setTimeout(() => void cycle(), 5000);
+      log(`keeper:   watching launchpad ${chain.K.launchpadAddr} (every ${Math.round(intervalMs / 1000)}s)`);
+    },
+    stop() {
+      if (timer) clearInterval(timer);
+      timer = null;
+    },
+    cycle, // exposed for tests / manual pokes
+  };
+}
+
+module.exports = { createLaunchpadKeeper };

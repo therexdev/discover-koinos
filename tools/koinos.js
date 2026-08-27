@@ -70,6 +70,7 @@ const ABI_DIR = path.join(__dirname, '..', 'server-abi');
 const COLLECTION_ABI = sanitizeAbi(JSON.parse(fs.readFileSync(path.join(ABI_DIR, 'collection-abi.json'))));
 const TOKEN_ABI = sanitizeAbi(JSON.parse(fs.readFileSync(path.join(ABI_DIR, 'token-abi.json'))));
 const ORDERBOOK_ABI = normalizeGeneratedAbi(JSON.parse(fs.readFileSync(path.join(ABI_DIR, 'orderbook-abi.json'))));
+const LAUNCHPAD_ABI = normalizeGeneratedAbi(JSON.parse(fs.readFileSync(path.join(ABI_DIR, 'launchpad-abi.json'))));
 /* NOT koilib's utils.tokenAbi: that one names its methods in camelCase
    (balanceOf), while this facade — and the KCS standard — speak snake_case
    (balance_of). The launchpad token ABI shares KOIN's standard entry
@@ -84,6 +85,8 @@ const K = {
   collectionWif: '',
   /* Trade Koinos orderbook DEX (mainnet only — no testnet deployment). */
   dexOrderbook: '',
+  /* Trade Koinos launchpad — the keeper settles its launches. */
+  launchpadAddr: '',
   /* rc_limit for ordinary co-signed operations. Mana is not spent up to
      this limit — it only caps the charge — and it regenerates, so a
      generous fixed ceiling beats a fragile estimation round-trip. A real
@@ -107,6 +110,7 @@ const net = () => NETWORKS[K.network];
 const enabled = () => !!K.devWif;
 const nftEnabled = () => !!(K.devWif && K.collectionAddr && K.collectionWif);
 const dexEnabled = () => !!(K.devWif && K.dexOrderbook);
+const launchpadEnabled = () => !!(K.devWif && K.launchpadAddr);
 
 function provider() {
   if (!_provider) {
@@ -172,6 +176,10 @@ const collectionContractAt = (addr, signer) => new Contract({
 });
 const tokenContractAt = (addr, signer) => new Contract({
   id: addr, abi: TOKEN_ABI, provider: provider(),
+  ...(signer ? { signer } : {}),
+});
+const launchpadContract = (signer) => new Contract({
+  id: K.launchpadAddr, abi: LAUNCHPAD_ABI, provider: provider(),
   ...(signer ? { signer } : {}),
 });
 const orderbookContract = (signer) => new Contract({
@@ -783,10 +791,10 @@ const tokenIdToCode = (hex) => {
 };
 
 module.exports = {
-  configure, net, enabled, nftEnabled, dexEnabled, K,
+  configure, net, enabled, nftEnabled, dexEnabled, launchpadEnabled, K,
   provider, devSigner, devAddress, isAddr, chainId, sanitizeAbi,
   koinContract, vhpContract, collectionContract, collectionContractAt,
-  tokenContractAt, orderbookContract,
+  tokenContractAt, orderbookContract, launchpadContract,
   fromSatsExact, toUnits, fromUnits,
   koinBalance, mana, headInfo, supplies,
   collectionInfo, collectionSupply, tokensOfOwner, nftOwner, nftMetadata,
@@ -799,5 +807,5 @@ module.exports = {
   tokenInitialized, collectionInitializedAt, allCollectionTokens,
   toDexPrice, dexMarketId, ensureDexMarket, opsDexSell,
   verifyAuthSignature, codeToTokenId, tokenIdToCode,
-  COLLECTION_ABI, TOKEN_ABI, KOIN_ABI, ORDERBOOK_ABI,
+  COLLECTION_ABI, TOKEN_ABI, KOIN_ABI, ORDERBOOK_ABI, LAUNCHPAD_ABI,
 };

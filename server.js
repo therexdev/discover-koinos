@@ -28,6 +28,7 @@ const crypto = require('node:crypto');
 const chain = require('./tools/koinos');
 const { pickRpcs, NETWORKS } = require('./tools/rpc');
 const { nftCardPng } = require('./tools/png');
+const { createLaunchpadKeeper } = require('./tools/launchpad-keeper');
 
 /* ---------------- configuration ---------------- */
 
@@ -92,6 +93,10 @@ const CFG = {
   /* Trade Koinos orderbook DEX — mainnet only; no testnet deployment. */
   dexOrderbook: process.env.DEX_ORDERBOOK_ADDR ||
     ((process.env.KOINOS_NETWORK || 'harbinger') === 'mainnet' ? '1Bke72aGbpq4brDY3m1UQxRCGBB9GPTJQz' : ''),
+  /* Trade Koinos launchpad contract. When set (and the sponsor wallet is
+     configured) the keeper loop auto-settles launches: finalize at the end,
+     payout/refund batches, locked-token delivery at unlock. */
+  launchpadAddr: process.env.LAUNCHPAD_ADDRESS || '',
   tradeAppUrl: (process.env.TRADE_APP_URL || 'https://app.tradekoinos.com').replace(/\/+$/, ''),
 
   /* Uploaded NFT images (the "Upload" path). Stored on the gateway, served
@@ -1441,6 +1446,7 @@ const server = http.createServer(async (req, res) => {
         devWif: CFG.devWif,
         collectionAddr: CFG.collectionAddr, collectionWif: CFG.collectionWif,
         dexOrderbook: CFG.dexOrderbook,
+        launchpadAddr: CFG.launchpadAddr,
       });
       const [sponsorMana, sponsorKoin] = await Promise.all([
         chain.mana(chain.devAddress()), chain.koinBalance(chain.devAddress()),
@@ -1466,6 +1472,14 @@ const server = http.createServer(async (req, res) => {
         console.log('paint:    no Paint collection configured — run scripts/deploy-playground.js');
       }
       console.log(`dex:      ${chain.dexEnabled() ? 'Trade Koinos ' + CFG.dexOrderbook : 'off (mainnet only)'}`);
+      if (chain.launchpadEnabled()) {
+        createLaunchpadKeeper({
+          chain, manaFloor: CFG.minManaAction,
+          log: (m) => console.log(m),
+        }).start();
+      } else {
+        console.log('keeper:   launchpad OFF — set LAUNCHPAD_ADDRESS to auto-settle Trade Koinos launches');
+      }
       if (!fs.existsSync(TOKEN_WASM)) console.log('tokens:   WARNING — contracts/prebuilt/token/contract.wasm missing; token launches will fail');
       if (!fs.existsSync(COLLECTION_WASM)) console.log('upload:   WARNING — contracts/prebuilt/collection/contract.wasm missing; Upload collections will fail');
     } catch (e) {
