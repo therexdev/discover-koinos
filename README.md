@@ -102,6 +102,11 @@ node server.js
 | `PUBLIC_ORIGIN` | *(derived)* | canonical https origin — used for uploaded-image URLs and the X callback |
 | `DATA_DIR` | `./data` | where records, keys and uploads live — **point it OUTSIDE the deploy directory** on hosts that wipe the app folder on redeploy (the server also self-heals from the chain, but images can't be rebuilt) |
 | `DEMO_MODE` | — | `1` forces demo mode |
+| **Koinos AI chat** (`/ai`) | | *(optional; the page hides its chat when unset)* |
+| `KAI_API_URL` | — | the OpenAI-compatible API of a running [Koinos AI](https://koinosai.com) app — the operator's own computer. Easiest: flip **Remote access** in the app's Local API view and copy the `https://koinosai.com/r/…` URL it shows (works from anywhere, no router setup). A tunnel/port-forward address works too — `127.0.0.1` only works on the app's own machine. With or without a trailing `/v1`. The app answers through the Koinos AI network and its account is billed per AI token |
+| `KAI_API_KEY` | — | an API key minted in that app (**Local API** view → Create key). Never a wallet key |
+| `KAI_CHAT_MODEL` | `koinos-network` | the model the chat asks the app for; `koinos-network` routes to the network's best live class |
+| `MAX_CHATS_PER_DAY` | `400` | global daily visitor-chat budget (plus 6/min and 60/day per IP built in) |
 | **Social login** | | *(all optional; Local Wallet + Import always work)* |
 | `GOOGLE_CLIENT_ID` | *(inherited)* | **Aurvania's** Google OAuth client ID (`…apps.googleusercontent.com`). Enables the Google button, which opens the **same wallet as Aurvania & OURO**. Leave unset to inherit it from Aurvania at boot. Works with or without `LOGIN_SECRET` — see [Google custody](#google-bridged-or-held-here) |
 | `AURVANIA_API` | `https://aurvania.quest` | the shared account server Google sign-in bridges to |

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Koinos AI — chat with the network</title>
+<meta name="description" content="Ask anything about Koinos and get an answer generated live by the Koinos AI network — ordinary computers around the world earning KOIN by serving AI.">
+<link rel="icon" href="/assets/brand/Koinos-Icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Plus+Jakarta+Sans:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="logo" href="/"><img src="/assets/brand/koinos-logomark-white.svg" alt="Koinos"><span>Discover <span class="logo-sub">Koinos</span></span></a>
+    <nav class="nav" aria-label="Main">
+      <a href="/wallet">Wallet</a>
+      <a href="/nft">NFT Studio</a>
+      <a href="/token">Token Lab</a>
+      <a href="/ai" class="active">Koinos AI</a>
+      <a href="/build">Build</a>
+    </nav>
+    <div class="header-right">
+      <span class="badge" id="net-badge">…</span>
+      <a class="addr-chip empty" id="addr-chip" href="/wallet"><span class="dot"></span><span class="addr-txt">no account yet</span></a>
+    </div>
+  </div>
+</header>
+
+<main class="wrap section">
+  <div class="section-head">
+    <h1>Talk to the network</h1>
+    <p>Every answer on this page is generated <strong>live by the Koinos AI network</strong> —
+      ordinary computers around the world serving AI from their own hardware and earning KOIN for it.
+      No datacenter, no AI company in the middle. Ask it about Koinos, or anything else.</p>
+  </div>
+
+  <div class="chat-card" id="chat-card">
+    <div class="chat-log" id="chat-log" aria-live="polite">
+      <div class="chat-msg bot">
+        <div class="chat-who">Koinos AI</div>
+        <div class="chat-text">Hi! I'm running on the Koinos AI network right now — somebody's own computer
+          is generating these words and earning KOIN for it. Ask me how Koinos works, what mana is,
+          how this site mints NFTs for free… or anything you're curious about.</div>
+      </div>
+    </div>
+    <form class="chat-form" id="chat-form">
+      <input id="chat-input" type="text" maxlength="500" autocomplete="off"
+             placeholder="Why doesn't Koinos charge gas fees?" aria-label="Your question" required>
+      <button class="btn" id="chat-send" type="submit">Ask</button>
+    </form>
+    <p class="chat-note" id="chat-note">Answers come from independent machines on the network — helpful, but
+      not official statements, and worth double-checking before you act on them.
+      Want this on your own computer? <a href="https://koinosai.com" target="_blank" rel="noopener">Get Koinos AI</a> —
+      it's the same app these machines earn with.</p>
+  </div>
+
+  <div class="vs-card" style="margin-top:40px">
+    <h2>What you're actually using</h2>
+    <p class="sub">This chat is the Koinos AI marketplace working end to end:</p>
+    <ul class="vs-list">
+      <li class="yes"><span class="mark">1.</span><div class="who"><strong>Your question goes to a real Koinos AI node</strong><span class="why">the same app anyone can run — it pays the network per AI token, like mana for intelligence</span></div></li>
+      <li class="yes"><span class="mark">2.</span><div class="who"><strong>The scheduler picks a machine</strong><span class="why">the best model any volunteer computer is serving right now</span></div></li>
+      <li class="yes"><span class="mark">3.</span><div class="who"><strong>That machine earns KOIN</strong><span class="why">its owner installed one app and their spare computer became income</span></div></li>
+    </ul>
+    <p class="vs-punch">Your PC could be the one answering. <a href="https://koinosai.com" target="_blank" rel="noopener">Run Koinos AI and start earning →</a></p>
+  </div>
+</main>
+
+<script src="/js/vendor/koinos.min.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/wallet.js"></script>
+<script src="/js/ui.js"></script>
+<script src="/js/ai-page.js"></script>
+</body>
+</html>
