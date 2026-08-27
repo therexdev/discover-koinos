@@ -613,6 +613,11 @@ api.signerConfig = async () => ({
   google: auth.signerEnabled(),
   googleClientId: auth.signerEnabled() ? auth.googleClientId() : null,
   sessionTtlMins: CFG.signerSessionTtlMins,
+  /* Launchpad extras for the trade app: where the launchpad contract lives
+     (auto-settled by this server's keeper) and whether this server can mint
+     fresh tokens for a session (sponsor wallet configured + not in demo). */
+  launchpad: CFG.launchpadAddr || null,
+  tokenLaunch: !DEMO && chain.enabled() && auth.signerEnabled(),
 });
 
 api.session = async (body, ip) => {
@@ -675,9 +680,21 @@ api.mintNft = async (body, ip, req) => {
 };
 
 api.launchToken = async (body, ip, req) => {
-  const err = verifyProof(body, 'launch-token');
-  if (err) throw httpError(400, err);
-  const address = body.address;
+  /* Two ways to prove who is launching: the browser-key proof (usekoinos'
+     own pages, OURO-style local wallets) or a signer SESSION token (Trade
+     Koinos Google users, whose key never enters a browser). The session
+     names its own address - body.address is ignored on that path, so a
+     stolen token still cannot launch for somebody else. */
+  let address;
+  if (body && body.sessionToken) {
+    const sess = auth.verifySessionToken(body.sessionToken);
+    if (!sess) throw httpError(401, 'your session has expired — sign in again');
+    address = sess.addr;
+  } else {
+    const err = verifyProof(body, 'launch-token');
+    if (err) throw httpError(400, err);
+    address = body.address;
+  }
   const name = cleanText(body.name, 64);
   const symbol = cleanText(body.symbol, 16).toUpperCase();
   const decimals = Number(body.decimals);
@@ -1336,7 +1353,7 @@ const POST_ROUTES = {
    that sign through this server). Everything else stays same-origin. Only an
    origin explicitly listed in SIGNER_ORIGINS is ever reflected, and only for
    /api/session and /api/sign. */
-const SIGNER_CORS_PATHS = new Set(['/api/session', '/api/sign', '/api/signer-config']);
+const SIGNER_CORS_PATHS = new Set(['/api/session', '/api/sign', '/api/signer-config', '/api/launch-token']);
 function applySignerCors(req, res, pathname) {
   const origin = req.headers.origin;
   if (!origin || !SIGNER_CORS_PATHS.has(pathname)) return;
