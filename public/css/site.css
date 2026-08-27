@@ -319,6 +319,42 @@ a.nft:hover { border-color: var(--accent); transform: translateY(-2px); }
 .gallery .nft .by { font-family: var(--font-mono); font-size: .68rem; color: var(--text-dim); }
 .gallery .nft .on-ouro { font-size: .64rem; font-weight: 800; letter-spacing: .05em; color: var(--accent-soft); vertical-align: 1px; }
 
+/* Optional logo picker on the launch forms. */
+.logo-pick { display: flex; align-items: center; gap: 12px; margin: 12px 0 4px; }
+.logo-pick .lp-face {
+  position: relative; width: 52px; height: 52px; flex: none; overflow: hidden;
+  border-radius: 14px; border: 1px dashed var(--line-strong); background: var(--bg-inset);
+  display: grid; place-items: center; padding: 0; cursor: pointer;
+}
+.logo-pick .lp-face:hover { border-color: var(--accent); }
+.logo-pick .lp-plus { color: var(--text-dim); font-size: 1.25rem; }
+.logo-pick img { width: 100%; height: 100%; object-fit: cover; }
+.logo-pick .lp-side { display: flex; flex-direction: column; line-height: 1.35; text-align: left; }
+.logo-pick .lp-label { font-weight: 700; color: var(--text-bright); font-size: .9rem; }
+.logo-pick .lp-clear { background: none; border: 0; color: var(--text-dim); cursor: pointer; font-size: .95rem; padding: 6px; }
+.logo-pick .lp-clear:hover { color: var(--bad); }
+
+/* Token share page: logo, facts grid, bottom external links. */
+.tok-hero-logo {
+  width: min(180px, 44vw); aspect-ratio: 1; object-fit: cover;
+  border-radius: 24%; border: 1px solid var(--line-strong); background: var(--bg-inset);
+  display: inline-block;
+}
+.tok-hero-mono {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--font-head); font-weight: 800; font-size: clamp(1.6rem, 6vw, 2.6rem);
+  color: #fff; background: linear-gradient(135deg, var(--grad-a), var(--grad-b));
+}
+.tok-facts {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px;
+  margin: 22px 0 0; padding: 0; text-align: left;
+}
+.tok-facts > div { background: var(--bg-card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.tok-facts dt { font-size: .72rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--text-dim); }
+.tok-facts dd { margin: 3px 0 0; color: var(--text-bright); font-weight: 600; }
+.mono-wrap { font-family: var(--font-mono); font-size: .82rem; font-weight: 500 !important; word-break: break-all; }
+.ext-links { display: flex; flex-direction: column; gap: 8px; margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--line); font-size: .92rem; }
+
 /* "Only on Koinos" comparison chart (Build page + public share pages). */
 .vs-card {
   background: var(--bg-card); border: 1px solid var(--line); border-radius: var(--radius);

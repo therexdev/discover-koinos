@@ -692,6 +692,15 @@ api.launchToken = async (body, ip, req) => {
   if (rateLimited('launch:addr:' + address, 2, 24 * 3600000)) throw httpError(429, 'that account already launched tokens today — come back tomorrow');
   if (rateLimited('launch:ip:' + ip, 3, 24 * 3600000)) throw httpError(429, 'too many launches from this connection today');
 
+  /* Optional coin logo — validated + stored on the gateway, shown on the
+     token's page and its share card. Off-chain by design: KCS-4 has no
+     logo field, so the image lives with the gateway like NFT uploads do. */
+  let imagePath = null;
+  if (body.logo) {
+    const img = decodeUploadImage(body.logo);
+    imagePath = '/uploads/' + storeUpload(img.buf, img.ext);
+  }
+
   // Reserve the daily slot SYNCHRONOUSLY, before any await.
   const releaseDaily = reserveDaily('launches', CFG.maxLaunchesPerDay);
   if (!releaseDaily) throw httpError(503, 'the gateway hit today’s launch budget — come back tomorrow');
@@ -726,6 +735,7 @@ api.launchToken = async (body, ip, req) => {
     address: address2, name, symbol, decimals, mintable,
     supplyUnits, supply: chain.fromUnits(supplyUnits, decimals),
     owner: address, txid: initTx || uploadTx, uploadTx, ts: Date.now(), demo: DEMO || undefined,
+    image: imagePath || undefined,   // origin-agnostic path, absolutized at render
   };
   registry.tokens.push(rec); saveTokens();
   return {
@@ -1083,8 +1093,11 @@ function sharePageNft(req, res, code) {
         <a class="btn big" href="/nft">Make yours — it&#39;s free</a>
         <a class="btn big ghost" href="/">How is this free?</a>
       </div>
-      ${rec.txid && !rec.demo && explorerTx(rec.txid) ? `<p class="hint" style="margin-top:18px"><a href="${esc(explorerTx(rec.txid))}" target="_blank" rel="noopener">verify it on-chain ↗</a></p>` : ''}
       ${comparisonHtml('This NFT was minted in a browser by someone with an <strong>empty wallet</strong> — no gas, no signup, no extension.')}
+      <div class="ext-links">
+        ${(() => { const c = rec.collection && registry.collections.find(x => x.address === rec.collection); return c && c.ouro && !rec.demo ? `<a href="${esc(ouroNftUrl(rec.collection, rec.tokenId))}" target="_blank" rel="noopener">this NFT on the OURO marketplace ↗</a>` : ''; })()}
+        ${rec.txid && !rec.demo && explorerTx(rec.txid) ? `<a href="${esc(explorerTx(rec.txid))}" target="_blank" rel="noopener">verify it on KoinosBlocks ↗</a>` : ''}
+      </div>
     </div>`;
   sendShareHtml(res, sharePageShell({ origin, path: '/n/' + rec.code, title, desc, ogImage, bodyHtml: body }));
 }
@@ -1097,25 +1110,45 @@ function sharePageToken(req, res, addr) {
   const desc = rec.demo
     ? `A demo of Discover Koinos — launch a real KCS-4 token in one click, no wallet, no fees, no signup. Try it free.`
     : `"${rec.name}" ($${rec.symbol}) — a real KCS-4 token contract, deployed from a browser with no wallet, no fees and no technical experience. Launch yours in one click, free.`;
+  const logo = rec.image
+    ? `<img src="${esc(absImage(rec.image, origin))}" alt="$${esc(rec.symbol)} logo" class="tok-hero-logo">`
+    : `<div class="tok-hero-logo tok-hero-mono" aria-hidden="true">${esc(String(rec.symbol).slice(0, 4))}</div>`;
+  const launched = rec.ts ? new Date(rec.ts).toISOString().slice(0, 10) : null;
   const body = `
     <div style="text-align:center">
-      <div style="font-family:var(--font-head);font-weight:800;font-size:clamp(3rem,10vw,5rem);color:var(--accent-soft);letter-spacing:-.02em">$${esc(rec.symbol)}</div>
-      <h1 style="margin-top:4px">${esc(rec.name)}</h1>
+      ${logo}
+      <div style="font-family:var(--font-head);font-weight:800;font-size:clamp(2.2rem,8vw,3.6rem);color:var(--accent-soft);letter-spacing:-.02em;margin-top:14px">$${esc(rec.symbol)}</div>
+      <h1 style="margin-top:2px;font-size:clamp(1.5rem,4vw,2.2rem)">${esc(rec.name)}</h1>
       <p class="sub" style="color:var(--text-dim)">
-        A real token contract on Koinos — supply <strong>${esc(rec.supply)}</strong>${rec.mintable ? ' (mintable)' : ' (fixed forever)'} —
-        launched by <code>${esc(UIshort(rec.owner))}</code> in one click, with
-        <strong>no wallet setup, no gas fees, no signup</strong>.
+        A real KCS-4 token contract on Koinos, launched by <code>${esc(UIshort(rec.owner))}</code>
+        in one click, with <strong>no wallet setup, no gas fees, no signup</strong>.
         ${rec.demo ? '<br><em>(demo — this instance is not chain-connected yet)</em>' : ''}
       </p>
       ${rec.dex ? `<p><span class="badge-ouro">📈 live on Trade Koinos with a KOIN pair</span></p>` : ''}
+      <dl class="tok-facts">
+        <div><dt>Token</dt><dd>${esc(rec.name)} ($${esc(rec.symbol)})</dd></div>
+        <div><dt>Contract ID</dt><dd class="mono-wrap">${esc(rec.address)}</dd></div>
+        <div><dt>Supply</dt><dd>${esc(rec.supply)}${rec.mintable ? ' · mintable' : ' · fixed forever'}</dd></div>
+        <div><dt>Decimals</dt><dd>${esc(String(rec.decimals))}</dd></div>
+        <div><dt>Owner</dt><dd class="mono-wrap">${esc(rec.owner || '—')}</dd></div>
+        ${launched ? `<div><dt>Launched</dt><dd>${esc(launched)} · free, at Discover Koinos</dd></div>` : ''}
+      </dl>
       <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:26px">
         <a class="btn big" href="/token">Launch yours — it&#39;s free</a>
-        ${rec.dex ? `<a class="btn big ghost" href="https://app.tradekoinos.com/" target="_blank" rel="noopener">Trade it ↗</a>` : `<a class="btn big ghost" href="/">How is this free?</a>`}
+        <a class="btn big ghost" href="/">How is this free?</a>
       </div>
-      ${!rec.demo && explorerAddr(rec.address) ? `<p class="hint" style="margin-top:18px"><a href="${esc(explorerAddr(rec.address))}" target="_blank" rel="noopener">the contract, on-chain ↗</a></p>` : ''}
       ${comparisonHtml('This is a real token contract, deployed free by someone with an <strong>empty wallet</strong> — no gas, no native coin bought first.')}
+      <div class="ext-links">
+        ${!rec.demo && explorerAddr(rec.address) ? `<a href="${esc(explorerAddr(rec.address))}" target="_blank" rel="noopener">the contract on KoinosBlocks ↗</a>` : ''}
+        ${rec.dex && !rec.demo ? `<a href="${esc(dexPairUrl(rec.address))}" target="_blank" rel="noopener">trade the $${esc(rec.symbol)}/KOIN pair on Trade Koinos ↗</a>` : ''}
+        ${!rec.demo && rec.txid ? `<a href="${esc(explorerTx(rec.txid))}" target="_blank" rel="noopener">the launch transaction ↗</a>` : ''}
+      </div>
     </div>`;
-  sendShareHtml(res, sharePageShell({ origin, path: '/t/' + rec.address, title, desc, ogImage: `${origin}/assets/og-card.png`, bodyHtml: body }));
+  sendShareHtml(res, sharePageShell({
+    origin, path: '/t/' + rec.address, title, desc,
+    ogImage: rec.image ? absImage(rec.image, origin) : `${origin}/assets/og-card.png`,
+    bodyHtml: body,
+  }));
 }
 
 const UIshort = (a) => (a ? String(a).slice(0, 6) + '…' + String(a).slice(-4) : '');
@@ -1395,6 +1428,10 @@ const server = http.createServer(async (req, res) => {
         if (pathname === '/api/upload-nft') {
           if (rateLimited('upload:ip:' + clientIp(req), 15, 24 * 3600000)) throw httpError(429, 'too many uploads from this connection today');
           cap = Math.ceil(CFG.maxUploadBytes * 10 * 4 / 3) + 64 * 1024;
+        } else if (pathname === '/api/launch-token') {
+          // One optional base64 logo rides along with a launch.
+          if (rateLimited('launchbody:ip:' + clientIp(req), 12, 24 * 3600000)) throw httpError(429, 'too many launch attempts from this connection today');
+          cap = Math.ceil(CFG.maxUploadBytes * 4 / 3) + 64 * 1024;
         }
         const body = await readBody(req, cap);
         out = await POST_ROUTES[pathname](body, clientIp(req), req);

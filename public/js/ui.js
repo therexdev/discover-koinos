@@ -123,6 +123,42 @@ const UI = (() => {
     }
   }
 
+  /* ---------------- logo picker ----------------
+     A tiny optional single-image picker (token logos). Renders into `host`;
+     the returned dataUrl() is null until an image is chosen. */
+  function logoPicker(host, { label = 'Logo — optional' } = {}) {
+    if (!host) return { dataUrl: () => null };
+    host.classList.add('logo-pick');
+    host.innerHTML = `
+      <button type="button" class="lp-face" aria-label="Choose a logo image">
+        <span class="lp-plus" aria-hidden="true">＋</span><img alt="" hidden>
+      </button>
+      <div class="lp-side">
+        <span class="lp-label">${escapeHtml(label)}</span>
+        <span class="hint">Square works best · PNG/JPEG/GIF/WebP · 3MB</span>
+      </div>
+      <button type="button" class="lp-clear" hidden aria-label="Remove logo">✕</button>
+      <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>`;
+    const img = $('img', host), plus = $('.lp-plus', host),
+          clear = $('.lp-clear', host), input = $('input', host);
+    let dataUrl = null;
+    $('.lp-face', host).addEventListener('click', () => input.click());
+    clear.addEventListener('click', () => {
+      dataUrl = null; img.hidden = true; plus.hidden = false; clear.hidden = true; input.value = '';
+    });
+    input.addEventListener('change', () => {
+      const f = input.files && input.files[0];
+      if (!f) return;
+      if (!/^image\/(png|jpe?g|gif|webp)$/.test(f.type)) { toast('Use PNG, JPEG, GIF or WebP for the logo', 'err'); return; }
+      if (f.size > 3 * 1024 * 1024) { toast('Logo is over 3MB — pick a smaller one', 'err'); return; }
+      const r = new FileReader();
+      r.onload = () => { dataUrl = r.result; img.src = dataUrl; img.hidden = false; plus.hidden = true; clear.hidden = false; };
+      r.onerror = () => toast('Could not read that image', 'err');
+      r.readAsDataURL(f);
+    });
+    return { dataUrl: () => dataUrl };
+  }
+
   /* ---------------- mobile menu ----------------
      The header nav is display:none under 720px; this builds its phone
      replacement — a hamburger that folds the same links out of the sticky
@@ -368,5 +404,5 @@ const UI = (() => {
     return addr;
   }
 
-  return { $, $$, short, fmt, toast, statusStepper, txLink, escapeHtml, initHeader, ensureAccount, openLogin, progress, markDone, paintRibbon, config: () => _cfg };
+  return { $, $$, short, fmt, toast, statusStepper, txLink, escapeHtml, initHeader, ensureAccount, openLogin, progress, markDone, paintRibbon, logoPicker, config: () => _cfg };
 })();
