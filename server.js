@@ -71,6 +71,18 @@ const CFG = {
   // overridable only so the Google verification path is testable offline
   googleTokenInfo: (process.env.GOOGLE_TOKENINFO || 'https://oauth2.googleapis.com/tokeninfo').replace(/\/+$/, ''),
 
+  /* Origins allowed to call the signer endpoints (/api/session, /api/sign)
+     cross-origin — the apps that let a Google account sign WITHOUT ever
+     receiving the private key. Comma-separated, exact scheme+host[:port], no
+     trailing slash. e.g. SIGNER_ORIGINS="https://app.tradekoinos.com".
+     Empty ⇒ same-origin only (the gateway's own pages). */
+  signerOrigins: (process.env.SIGNER_ORIGINS || '')
+    .split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean),
+  /* How long a signing session lasts before the app must sign in again. A
+     stolen session token can authorize signing only within this window (and
+     only through the rate-limited endpoint), so keep it modest. */
+  signerSessionTtlMins: Math.max(5, Number(process.env.SIGNER_SESSION_TTL_MINS || 180)),
+
   /* OURO marketplace auto-registration (discoverability). Server-to-server;
      no key needed to register, admin key only lifts the rate limit. */
   ouroApiBase: (process.env.OURO_API_BASE || 'https://ouro.lifestyle').replace(/\/+$/, ''),
@@ -112,6 +124,8 @@ const auth = createAuth({
      per-boot fallback above, which no stored key could survive. */
   googleLocalCustody: !!CFG.loginSecret,
   googleTokenInfo: CFG.googleTokenInfo,
+  // server-side signer session lifetime (see the signer section of auth.js)
+  sessionTtlMins: CFG.signerSessionTtlMins,
   /* Bulk import from Aurvania at boot: drop aurvania-logins.json into
      DATA_DIR and set AURVANIA_LOGIN_SECRET, then restart — see tools/auth.js.
      Gated on the real LOGIN_SECRET for the same reason custody is. */
@@ -577,6 +591,25 @@ api.auth = async (body, ip) => {
     return { ok: true, wif: r.wif, address: r.address, label: r.label };
   }
   throw httpError(400, 'unknown action');
+};
+
+/* ---------------- server-side signer ----------------
+   The wallet key never leaves the server: /api/session hands the app a
+   short-lived session token instead of a WIF, and /api/sign signs a prepared
+   transaction with the held key. Both are callable cross-origin from the app
+   origins in SIGNER_ORIGINS (see the CORS block in the request handler). */
+
+api.session = async (body, ip) => {
+  if (rateLimited('session:ip:' + ip, 30, 3600000)) throw httpError(429, 'too many sign-in attempts — wait a few minutes');
+  const r = await auth.googleSession(body.idToken);
+  return { ok: true, token: r.token, address: r.address, label: r.label, expiresInMs: r.expiresInMs };
+};
+
+api.sign = async (body, ip) => {
+  // signing is a normal in-session action, so a looser per-IP cap than login
+  if (rateLimited('sign:ip:' + ip, 120, 60000)) throw httpError(429, 'signing too fast — slow down');
+  const r = await auth.signWithToken(body.token, body.transaction);
+  return { ok: true, address: r.address, id: r.id, signatures: r.signatures };
 };
 
 api.mintNft = async (body, ip, req) => {
@@ -1276,14 +1309,38 @@ const POST_ROUTES = {
   '/api/upload-nft': api.uploadNft,
   '/api/list-dex': api.listDex,
   '/api/auth': api.auth,
+  '/api/session': api.session,
+  '/api/sign': api.sign,
   '/api/prepare': api.prepare,
   '/api/submit': api.submit,
 };
+
+/* The signer endpoints are meant to be called from other origins (the apps
+   that sign through this server). Everything else stays same-origin. Only an
+   origin explicitly listed in SIGNER_ORIGINS is ever reflected, and only for
+   /api/session and /api/sign. */
+const SIGNER_CORS_PATHS = new Set(['/api/session', '/api/sign']);
+function applySignerCors(req, res, pathname) {
+  const origin = req.headers.origin;
+  if (!origin || !SIGNER_CORS_PATHS.has(pathname)) return;
+  if (!CFG.signerOrigins.includes(origin.replace(/\/+$/, ''))) return;
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Max-Age', '600');
+}
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
   try {
+    applySignerCors(req, res, pathname);
+    if (req.method === 'OPTIONS' && SIGNER_CORS_PATHS.has(pathname)) {
+      // preflight: headers already set above (or withheld for a disallowed origin)
+      res.writeHead(res.getHeader('Access-Control-Allow-Origin') ? 204 : 403);
+      return res.end();
+    }
     // X (Twitter) OAuth redirect endpoints — full-page redirects, not JSON.
     if (pathname === '/auth/x/login') {
       if (rateLimited('xlogin:ip:' + clientIp(req), 20, 3600000)) { res.writeHead(429, { 'Content-Type': 'text/plain' }); return res.end('slow down'); }
@@ -1421,6 +1478,14 @@ const server = http.createServer(async (req, res) => {
   if (auth.xEnabled()) console.log('auth:     X (Twitter) sign-in ENABLED');
   else if (CFG.xClientId && !CFG.loginSecret) console.log('auth:     X client id set but LOGIN_SECRET is unset — X sign-in stays OFF');
   console.log('auth:     Local Wallet + Import always available');
+  if (auth.signerEnabled()) {
+    console.log(`signer:   /api/session + /api/sign ENABLED — apps sign via this server, the key never leaves it (${CFG.signerSessionTtlMins}-min sessions)`);
+    console.log(CFG.signerOrigins.length
+      ? `signer:   cross-origin allowed for: ${CFG.signerOrigins.join(', ')}`
+      : 'signer:   same-origin only — set SIGNER_ORIGINS to let another app (e.g. app.tradekoinos.com) sign through this server');
+  } else if (auth.googleEnabled() && !auth.googleCustody()) {
+    console.log('signer:   OFF — set LOGIN_SECRET to enable server-side signing (keys held here instead of handed to browsers)');
+  }
 
   server.listen(CFG.port, () => {
     console.log(`serving:  http://localhost:${CFG.port} ${DEMO ? '(demo mode)' : ''}`);

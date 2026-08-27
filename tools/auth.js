@@ -55,6 +55,8 @@ function createAuth(cfg) {
     googleTokenInfo = 'https://oauth2.googleapis.com/tokeninfo',
     /* Aurvania's LOGIN_SECRET, when a bulk import is wanted (see below). */
     aurvaniaImportSecret = '',
+    /* Server-side signer session lifetime, minutes (see the signer section). */
+    sessionTtlMins = 180,
   } = cfg;
 
   /* The Google client id we actually use. If the operator set one we keep
@@ -386,8 +388,107 @@ function createAuth(cfg) {
     return { wif: c.wif, address: c.address, label: c.label };
   }
 
+  /* ==========================================================================
+     Server-side signer — the wallet key never leaves this process.
+
+     Instead of releasing the WIF to the browser (google() above), a Google
+     login here mints a short-lived SESSION TOKEN, and the app asks this
+     server to SIGN transactions with the held key. An XSS on the app can, at
+     worst, ask for a signature during the token's lifetime through a
+     rate-limited endpoint — it can never walk off with the key, which is the
+     difference between "an incident" and "every wallet drained forever".
+
+     The token is a stateless HMAC over {sub, addr, exp} under a secret
+     derived from LOGIN_SECRET, so it survives a restart (the app stays signed
+     in across a redeploy) with no server-side session table. Short TTL bounds
+     a stolen token; rotating LOGIN_SECRET invalidates every token at once as
+     the emergency stop. Requires local custody — without a held key there is
+     nothing to sign with.
+     ========================================================================== */
+
+  const sessionTtlMs = Math.max(5, Number(sessionTtlMins) || 180) * 60000;
+  let _sessKey = null;
+  const sessionKey = () => (_sessKey || (_sessKey = crypto.scryptSync(loginSecret, 'dk-session-v1', 32)));
+
+  function signerEnabled() { return googleEnabled() && googleLocalCustody; }
+
+  function makeSessionToken(sub, addr) {
+    const payload = base64url(JSON.stringify({ sub, addr, exp: Date.now() + sessionTtlMs }));
+    const mac = base64url(crypto.createHmac('sha256', sessionKey()).update(payload).digest());
+    return payload + '.' + mac;
+  }
+
+  function verifySessionToken(token) {
+    const parts = String(token || '').split('.');
+    if (parts.length !== 2) return null;
+    const expected = base64url(crypto.createHmac('sha256', sessionKey()).update(parts[0]).digest());
+    const a = Buffer.from(parts[1]), b = Buffer.from(expected);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+    let p;
+    try { p = JSON.parse(Buffer.from(parts[0].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')); }
+    catch (_) { return null; }
+    if (!p || !p.sub || !p.addr || !p.exp || Date.now() > Number(p.exp)) return null;
+    return { sub: String(p.sub), addr: String(p.addr) };
+  }
+
+  /* Google login for signer apps: verify, ensure the account exists (adopting
+     the Aurvania wallet on first sight, exactly like google()), and hand back
+     a session token — never the WIF. */
+  async function googleSession(idToken) {
+    if (!signerEnabled()) {
+      const e = new Error('Server-side signing is not enabled here (needs LOGIN_SECRET + Google)');
+      e.status = 503; throw e;
+    }
+    if (!idToken) { const e = new Error('idToken required'); e.status = 400; throw e; }
+
+    const id = await verifyGoogleIdToken(idToken);
+    let rec = store.byGoogle[id.sub];
+    if (rec && rec.wifEnc) {
+      if (rec.email !== id.email) { rec.email = id.email; save(); }
+    } else {
+      // first sight — adopt Aurvania's existing wallet (never mint), same rule
+      // as google(): if Aurvania can't be reached, fail rather than guess.
+      const remote = await aurvaniaWallet(idToken);
+      let derived;
+      try { derived = Signer.fromWif(remote.wif).getAddress(); } catch (_) { derived = ''; }
+      if (derived !== remote.address) {
+        const e = new Error('The account service returned a mismatched wallet — sign-in refused');
+        e.status = 502; throw e;
+      }
+      rec = store.byGoogle[id.sub] = {
+        email: id.email, wifEnc: encryptWif(remote.wif), addr: remote.address,
+        adoptedFrom: aurvaniaApi, adoptedAt: Date.now(),
+      };
+      save();
+    }
+    return { token: makeSessionToken(id.sub, rec.addr), address: rec.addr, label: id.email, expiresInMs: sessionTtlMs };
+  }
+
+  /* Sign a prepared koilib transaction with the session's key. The key is
+     decrypted, used, and dropped inside this call — it is never returned. The
+     app broadcasts the signed transaction itself; this server only signs. */
+  async function signWithToken(token, transaction) {
+    if (!signerEnabled()) { const e = new Error('Server-side signing is not enabled here'); e.status = 503; throw e; }
+    const sess = verifySessionToken(token);
+    if (!sess) { const e = new Error('Your session expired — sign in again'); e.status = 401; throw e; }
+    const rec = store.byGoogle[sess.sub];
+    if (!rec || !rec.wifEnc) { const e = new Error('That account is no longer available here'); e.status = 401; throw e; }
+    if (rec.addr !== sess.addr) { const e = new Error('Session/account mismatch — sign in again'); e.status = 401; throw e; }
+    if (!transaction || typeof transaction !== 'object' || !transaction.header) {
+      const e = new Error('a prepared transaction is required'); e.status = 400; throw e;
+    }
+
+    const signer = Signer.fromWif(release(rec, 'google'));
+    // koilib signs in place, appending to transaction.signatures
+    const signed = await signer.signTransaction(transaction);
+    const signatures = (signed && signed.signatures) || transaction.signatures || [];
+    return { address: rec.addr, id: transaction.id, signatures };
+  }
+
   return {
     warmup, googleEnabled, xEnabled, google, xLoginUrl, xCallback, xClaimWif,
+    googleSession, signWithToken, verifySessionToken,
+    signerEnabled,
     googleClientId: () => resolvedGoogleCid,
     googleCustody: () => !!googleLocalCustody,
     aurvania: () => aurvaniaApi,
