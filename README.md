@@ -102,6 +102,10 @@ node server.js
 | `PUBLIC_ORIGIN` | *(derived)* | canonical https origin — used for uploaded-image URLs and the X callback |
 | `DATA_DIR` | `./data` | where records, keys and uploads live — **point it OUTSIDE the deploy directory** on hosts that wipe the app folder on redeploy (the server also self-heals from the chain, but images can't be rebuilt) |
 | `DEMO_MODE` | — | `1` forces demo mode |
+| **Koinos AI chat** (`/ai`) | | *(optional; the page hides its chat when unset)* |
+| `KAI_CHAT_WIF` | — | key of a **dedicated** Koinos account that pays for visitor chats on the [Koinos AI](https://koinosai.com) network. Make a fresh account for this — never the sponsor wallet: the scheduler bills whatever address signs, so this key's blast radius should be pocket money. Fund it by depositing KAI to that address at the scheduler (its free daily allowance is spent first) |
+| `KAI_SCHEDULER_URL` | `https://koinosai.com/scheduler` | the Koinos AI scheduler the chat signs requests against |
+| `MAX_CHATS_PER_DAY` | `400` | global daily visitor-chat budget (plus 6/min and 60/day per IP built in) |
 | **Social login** | | *(all optional; Local Wallet + Import always work)* |
 | `GOOGLE_CLIENT_ID` | *(inherited)* | **Aurvania's** Google OAuth client ID (`…apps.googleusercontent.com`). Enables the Google button, which opens the **same wallet as Aurvania & OURO**. Leave unset to inherit it from Aurvania at boot. Works with or without `LOGIN_SECRET` — see [Google custody](#google-bridged-or-held-here) |
 | `AURVANIA_API` | `https://aurvania.quest` | the shared account server Google sign-in bridges to |

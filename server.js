@@ -26,6 +26,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const chain = require('./tools/koinos');
+const kaiChat = require('./tools/kai-chat');
 const { pickRpcs, NETWORKS } = require('./tools/rpc');
 const { nftCardPng } = require('./tools/png');
 
@@ -97,7 +98,20 @@ const CFG = {
   /* Uploaded NFT images (the "Upload" path). Stored on the gateway, served
      by URL, referenced from on-chain metadata. */
   maxUploadBytes: parseInt(process.env.MAX_UPLOAD_BYTES || String(3 * 1024 * 1024), 10),
+
+  /* Koinos AI visitor chat. Answered by the Koinos AI NETWORK — volunteer
+     machines earning KOIN — never by this box, which only signs and relays.
+     KAI_CHAT_WIF is a DEDICATED Koinos account whose only job is paying for
+     AI tokens at the scheduler (free daily allowance first, then deposited
+     KAI). Keep it separate from the sponsor wallet on purpose: a leaked
+     chat key should cost pocket money, not the mint sponsor. Unset ⇒ the
+     chat page says the feature is off and nothing else changes. */
+  kaiChatWif: process.env.KAI_CHAT_WIF || '',
+  kaiScheduler: (process.env.KAI_SCHEDULER_URL || 'https://koinosai.com/scheduler').replace(/\/+$/, ''),
+  maxChatsPerDay: parseInt(process.env.MAX_CHATS_PER_DAY || '400', 10),
 };
+
+kaiChat.configure({ wif: CFG.kaiChatWif, scheduler: CFG.kaiScheduler });
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 /* DATA_DIR can live OUTSIDE the deploy directory (env DATA_DIR) — a git
@@ -497,6 +511,7 @@ api.config = async () => {
       mintsPerDay: CFG.maxMintsPerDay,
       collectionsPerDay: CFG.maxCollectionsPerDay,
     },
+    aiChat: { enabled: kaiChat.enabled() },
   };
 };
 
@@ -1191,6 +1206,7 @@ const PAGES = {
   '/wallet': 'wallet.html',
   '/nft': 'nft.html',
   '/token': 'token.html',
+  '/ai': 'ai.html',
   '/build': 'build.html',
 };
 
@@ -1306,6 +1322,76 @@ function serveUpload(req, res, pathname) {
   });
 }
 
+/* POST /api/ai-chat {question, history?} → SSE. The visitor's question goes
+   to the Koinos AI network as a wallet-signed paid request and the answer
+   streams back word by word. Spending controls live HERE, before any money
+   moves: per-IP pacing, a per-IP daily cap, and a site-wide daily budget on
+   the same reserveDaily used for mints — reserved synchronously so a burst
+   can't sail past the ceiling together, refunded when no tokens were
+   bought. The system prompt and history bounds are kai-chat.js's job. */
+async function handleAiChat(req, res) {
+  if (!kaiChat.enabled()) throw httpError(503, 'AI chat is not switched on for this server');
+  const ip = clientIp(req);
+  if (rateLimited('aichat:ip:' + ip, 6, 60000)) throw httpError(429, 'one question at a time — give it a few seconds');
+  if (rateLimited('aichat:ipday:' + ip, 60, 24 * 3600000)) throw httpError(429, 'that is a lot of questions for one connection today — come back tomorrow');
+  const release = reserveDaily('aiChats', CFG.maxChatsPerDay);
+  if (!release) throw httpError(503, "today's AI budget for this site is used up — it resets at midnight UTC");
+
+  let spent = false; // tokens were bought: the daily slot stays consumed
+  try {
+    const body = await readBody(req, 32 * 1024);
+    const question = typeof body.question === 'string' ? body.question.trim() : '';
+    if (!question) throw httpError(400, 'ask something');
+
+    const messages = kaiChat.buildMessages(question, body.history);
+    let upstream;
+    try {
+      upstream = await kaiChat.requestChat(messages);
+    } catch (e) {
+      console.error(`[${new Date().toISOString()}] ai-chat: scheduler unreachable -`, String(e.message || e).slice(0, 200));
+      throw httpError(502, 'the Koinos AI network did not answer — try again in a moment');
+    }
+    if (!upstream.ok) {
+      /* The scheduler's own messages name balances and accounts — log them
+         for the operator, hand the visitor something they can act on. 402 is
+         the chat account out of allowance+credits (operator's problem, not
+         the visitor's); 503 is "no providers online right now" (honest). */
+      const uj = await upstream.json().catch(() => null);
+      const detail = uj?.error?.message || `HTTP ${upstream.status}`;
+      console.error(`[${new Date().toISOString()}] ai-chat: scheduler refused -`, String(detail).slice(0, 300));
+      if (upstream.status === 402) throw httpError(503, "the site's AI allowance for today ran out — try again after midnight UTC");
+      if (upstream.status === 503) throw httpError(503, 'no machines on the Koinos AI network are free right now — try again in a minute');
+      throw httpError(502, 'the Koinos AI network could not take that question — try again in a moment');
+    }
+
+    spent = true; // a provider is generating from here on
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-store',
+      Connection: 'keep-alive',
+    });
+    /* Relay the scheduler's SSE frames untouched ({delta}, {error},
+       {done, usage}) — the page understands them directly. Cancel upstream
+       if the visitor leaves: the network worker stops generating and the
+       chat account stops paying for words nobody will read. */
+    const reader = upstream.body.getReader();
+    let gone = false;
+    res.on('close', () => { gone = true; reader.cancel().catch(() => {}); });
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done || gone) break;
+        res.write(Buffer.from(value));
+      }
+    } catch (e) {
+      if (!gone) console.error(`[${new Date().toISOString()}] ai-chat: stream broke -`, String(e.message || e).slice(0, 200));
+    }
+    return res.end();
+  } finally {
+    if (!spent) release();
+  }
+}
+
 const GET_ROUTES = {
   '/api/config': api.config,
   '/api/signer-config': api.signerConfig,
@@ -1379,6 +1465,12 @@ const server = http.createServer(async (req, res) => {
        and the registry lookup inside is the real gate. */
     if ((m = /^\/t\/([A-Za-z0-9]{20,40})$/.exec(pathname))) return sharePageToken(req, res, m[1]);
     if ((m = /^\/og\/nft\/([A-Z0-9-]{1,40})\.png$/.exec(pathname))) return serveNftOg(req, res, m[1]);
+
+    /* Streams, so it cannot go through the JSON route table below. Errors
+       thrown before the stream starts still land in the outer catch and
+       come back as ordinary JSON errors — awaited, because a rejected
+       promise merely RETURNED from inside a try block skips its catch. */
+    if (pathname === '/api/ai-chat' && req.method === 'POST') return await handleAiChat(req, res);
 
     if (pathname.startsWith('/api/')) {
       res.setHeader('Content-Type', 'application/json');
