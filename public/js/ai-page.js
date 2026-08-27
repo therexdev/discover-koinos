@@ -63,6 +63,7 @@
     const giveUp = setTimeout(() => ctrl.abort(), 170000);
 
     let answer = '';
+    let served = '';
     try {
       const res = await fetch('/api/ai-chat', {
         method: 'POST',
@@ -95,6 +96,7 @@
             const data = line.slice(5).trim();
             if (!data || data === '[DONE]') continue;
             let f; try { f = JSON.parse(data); } catch (_) { continue; }
+            if (f.servedModel) served = String(f.servedModel);
             const delta = f.choices?.[0]?.delta?.content ?? f.delta;
             if (delta) {
               answer += delta;
@@ -107,6 +109,14 @@
       }
       if (!answer) throw new Error('the network sent no answer — try again');
       history.push({ role: 'user', content: question }, { role: 'assistant', content: answer });
+      /* Which model actually generated this — honest provenance, and it makes
+         "why was that slow/fast?" answerable at a glance. */
+      if (served) {
+        const meta = document.createElement('div');
+        meta.className = 'chat-meta';
+        meta.textContent = `answered by ${served} — one machine on the network`;
+        out.parentElement.appendChild(meta);
+      }
     } catch (err) {
       /* Keep whatever streamed before the failure — half an answer plus an
          honest note beats a blank bubble. */
