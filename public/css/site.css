@@ -417,6 +417,21 @@ pre.code .s { color: #86efac; }
 .site-footer .foot-links { display: flex; gap: 20px; flex-wrap: wrap; }
 .site-footer img { height: 22px; opacity: .85; }
 
+/* ecosystem: sibling-app logos/links at the foot of every page */
+.site-footer .eco { text-align: center; padding-bottom: 30px; margin-bottom: 26px; border-bottom: 1px solid var(--line); }
+.eco-label { display: block; font-size: .74rem; text-transform: uppercase; letter-spacing: .1em; color: var(--text-dim); margin-bottom: 16px; }
+.eco-row { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+.eco-tile {
+  display: flex; align-items: center; justify-content: center;
+  width: 138px; height: 86px; padding: 12px 18px;
+  background: rgba(255, 255, 255, .05); border: 1px solid var(--line-strong); border-radius: 14px;
+  transition: transform .14s ease, border-color .14s ease, background .14s ease;
+}
+/* beat `.site-footer img { height: 22px }` above */
+.site-footer .eco-tile img { height: auto; max-height: 100%; max-width: 100%; object-fit: contain; opacity: 1; display: block; }
+.eco-tile:hover { transform: translateY(-2px); border-color: var(--accent); background: rgba(255, 255, 255, .09); }
+@media (max-width: 480px) { .eco-tile { width: 44%; max-width: 160px; } }
+
 /* ---------------- modal ---------------- */
 
 dialog.modal {
