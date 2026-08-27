@@ -30,7 +30,9 @@ const K = {
 
 function configure(opts) {
   Object.assign(K, opts || {});
-  K.url = String(K.url || '').replace(/\/+$/, '');
+  /* The app's own snippet shows its base URL ending in /v1 (OpenAI-SDK
+     style); we append the full /v1/... path ourselves — accept either. */
+  K.url = String(K.url || '').replace(/\/+$/, '').replace(/\/v1$/, '');
 }
 
 const enabled = () => !!K.url;

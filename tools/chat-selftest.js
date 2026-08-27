@@ -25,6 +25,8 @@ async function test(name, fn) {
     kaiChat.configure({ url: 'http://127.0.0.1:41100/', key: 'k' });
     assert.strictEqual(kaiChat.enabled(), true);
     assert.strictEqual(kaiChat.K.url, 'http://127.0.0.1:41100'); // trailing slash trimmed
+    kaiChat.configure({ url: 'https://example.com/v1' }); // app snippet style
+    assert.strictEqual(kaiChat.K.url, 'https://example.com');
   });
 
   await test('buildMessages forces the system prompt first', () => {

@@ -103,7 +103,7 @@ node server.js
 | `DATA_DIR` | `./data` | where records, keys and uploads live — **point it OUTSIDE the deploy directory** on hosts that wipe the app folder on redeploy (the server also self-heals from the chain, but images can't be rebuilt) |
 | `DEMO_MODE` | — | `1` forces demo mode |
 | **Koinos AI chat** (`/ai`) | | *(optional; the page hides its chat when unset)* |
-| `KAI_API_URL` | — | the OpenAI-compatible API of a running [Koinos AI](https://koinosai.com) app — the operator's own computer (the app serves it on port 41100; expose it to this server via a tunnel or port-forward). The app answers through the Koinos AI network and its account is billed per AI token |
+| `KAI_API_URL` | — | the OpenAI-compatible API of a running [Koinos AI](https://koinosai.com) app — the operator's own computer (the app serves it on port 41100; expose it to this server via a tunnel or port-forward, and use THAT address here — `127.0.0.1` only works on the app's own machine). With or without a trailing `/v1`. The app answers through the Koinos AI network and its account is billed per AI token |
 | `KAI_API_KEY` | — | an API key minted in that app (**Local API** view → Create key). Never a wallet key |
 | `KAI_CHAT_MODEL` | `koinos-network` | the model the chat asks the app for; `koinos-network` routes to the network's best live class |
 | `MAX_CHATS_PER_DAY` | `400` | global daily visitor-chat budget (plus 6/min and 60/day per IP built in) |
