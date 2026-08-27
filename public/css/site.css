@@ -353,12 +353,16 @@ a.nft:hover { border-color: var(--accent); transform: translateY(-2px); }
 .tok-facts dt { font-size: .72rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--text-dim); }
 .tok-facts dd { margin: 3px 0 0; color: var(--text-bright); font-weight: 600; }
 .mono-wrap { font-family: var(--font-mono); font-size: .82rem; font-weight: 500 !important; word-break: break-all; }
-.ext-links { display: flex; flex-direction: column; gap: 8px; margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--line); font-size: .92rem; }
+.ext-links { display: flex; flex-direction: column; gap: 8px; margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--line); font-size: .92rem; }
+/* Demo records render no external links — don't leave a stray divider. */
+.ext-links:empty { display: none; }
 
-/* "Only on Koinos" comparison chart (Build page + public share pages). */
+/* "Only on Koinos" comparison chart (Build page + public share pages).
+   The base top margin keeps it off the CTA buttons on share pages; the
+   Build page overrides it inline to sit deeper in its own flow. */
 .vs-card {
   background: var(--bg-card); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 26px; text-align: left;
+  padding: 26px; text-align: left; margin-top: 36px;
 }
 .vs-card h2 { margin: 0 0 6px; font-size: 1.45rem; }
 .vs-card .sub { margin: 0; color: var(--text-dim); }

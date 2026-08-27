@@ -1094,10 +1094,10 @@ function sharePageNft(req, res, code) {
         <a class="btn big ghost" href="/">How is this free?</a>
       </div>
       ${comparisonHtml('This NFT was minted in a browser by someone with an <strong>empty wallet</strong> — no gas, no signup, no extension.')}
-      <div class="ext-links">
-        ${(() => { const c = rec.collection && registry.collections.find(x => x.address === rec.collection); return c && c.ouro && !rec.demo ? `<a href="${esc(ouroNftUrl(rec.collection, rec.tokenId))}" target="_blank" rel="noopener">this NFT on the OURO marketplace ↗</a>` : ''; })()}
-        ${rec.txid && !rec.demo && explorerTx(rec.txid) ? `<a href="${esc(explorerTx(rec.txid))}" target="_blank" rel="noopener">verify it on KoinosBlocks ↗</a>` : ''}
-      </div>
+      ${extLinksHtml([
+        (() => { const c = rec.collection && registry.collections.find(x => x.address === rec.collection); return c && c.ouro && !rec.demo && `<a href="${esc(ouroNftUrl(rec.collection, rec.tokenId))}" target="_blank" rel="noopener">this NFT on the OURO marketplace ↗</a>`; })(),
+        rec.txid && !rec.demo && explorerTx(rec.txid) && `<a href="${esc(explorerTx(rec.txid))}" target="_blank" rel="noopener">verify it on KoinosBlocks ↗</a>`,
+      ])}
     </div>`;
   sendShareHtml(res, sharePageShell({ origin, path: '/n/' + rec.code, title, desc, ogImage, bodyHtml: body }));
 }
@@ -1138,11 +1138,11 @@ function sharePageToken(req, res, addr) {
         <a class="btn big ghost" href="/">How is this free?</a>
       </div>
       ${comparisonHtml('This is a real token contract, deployed free by someone with an <strong>empty wallet</strong> — no gas, no native coin bought first.')}
-      <div class="ext-links">
-        ${!rec.demo && explorerAddr(rec.address) ? `<a href="${esc(explorerAddr(rec.address))}" target="_blank" rel="noopener">the contract on KoinosBlocks ↗</a>` : ''}
-        ${rec.dex && !rec.demo ? `<a href="${esc(dexPairUrl(rec.address))}" target="_blank" rel="noopener">trade the $${esc(rec.symbol)}/KOIN pair on Trade Koinos ↗</a>` : ''}
-        ${!rec.demo && rec.txid ? `<a href="${esc(explorerTx(rec.txid))}" target="_blank" rel="noopener">the launch transaction ↗</a>` : ''}
-      </div>
+      ${extLinksHtml([
+        !rec.demo && explorerAddr(rec.address) && `<a href="${esc(explorerAddr(rec.address))}" target="_blank" rel="noopener">the contract on KoinosBlocks ↗</a>`,
+        rec.dex && !rec.demo && `<a href="${esc(dexPairUrl(rec.address))}" target="_blank" rel="noopener">trade the $${esc(rec.symbol)}/KOIN pair on Trade Koinos ↗</a>`,
+        !rec.demo && rec.txid && `<a href="${esc(explorerTx(rec.txid))}" target="_blank" rel="noopener">the launch transaction ↗</a>`,
+      ])}
     </div>`;
   sendShareHtml(res, sharePageShell({
     origin, path: '/t/' + rec.address, title, desc,
@@ -1152,6 +1152,13 @@ function sharePageToken(req, res, addr) {
 }
 
 const UIshort = (a) => (a ? String(a).slice(0, 6) + '…' + String(a).slice(-4) : '');
+
+/* The bottom links strip on share pages — rendered only when at least one
+   link survives its condition, so demo pages never show a stray divider. */
+function extLinksHtml(links) {
+  const real = links.filter(Boolean);
+  return real.length ? `<div class="ext-links">${real.join('')}</div>` : '';
+}
 
 /* The FOMO chart — "that wasn't magic, it's architecture". What this page's
    action would have cost anywhere else. Shared by the NFT and token share
