@@ -599,6 +599,17 @@ api.auth = async (body, ip) => {
    transaction with the held key. Both are callable cross-origin from the app
    origins in SIGNER_ORIGINS (see the CORS block in the request handler). */
 
+/* Minimal public config for a signer app (e.g. app.tradekoinos.com) that has
+   no server of its own: just what it needs to draw the Google button and mint
+   an id token this server will accept. CORS-allowed for SIGNER_ORIGINS. */
+api.signerConfig = async () => ({
+  ok: true,
+  signer: auth.signerEnabled(),
+  google: auth.signerEnabled(),
+  googleClientId: auth.signerEnabled() ? auth.googleClientId() : null,
+  sessionTtlMins: CFG.signerSessionTtlMins,
+});
+
 api.session = async (body, ip) => {
   if (rateLimited('session:ip:' + ip, 30, 3600000)) throw httpError(429, 'too many sign-in attempts — wait a few minutes');
   const r = await auth.googleSession(body.idToken);
@@ -1297,6 +1308,7 @@ function serveUpload(req, res, pathname) {
 
 const GET_ROUTES = {
   '/api/config': api.config,
+  '/api/signer-config': api.signerConfig,
   '/api/stats': api.stats,
   '/api/account': api.account,
   '/api/collections': api.collections,
@@ -1319,7 +1331,7 @@ const POST_ROUTES = {
    that sign through this server). Everything else stays same-origin. Only an
    origin explicitly listed in SIGNER_ORIGINS is ever reflected, and only for
    /api/session and /api/sign. */
-const SIGNER_CORS_PATHS = new Set(['/api/session', '/api/sign']);
+const SIGNER_CORS_PATHS = new Set(['/api/session', '/api/sign', '/api/signer-config']);
 function applySignerCors(req, res, pathname) {
   const origin = req.headers.origin;
   if (!origin || !SIGNER_CORS_PATHS.has(pathname)) return;
