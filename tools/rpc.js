@@ -48,11 +48,16 @@ const NETWORKS = {
   },
 };
 
-/** Candidate URLs for a network, honouring the KOINOS_RPC override. */
+/** Candidate URLs for a network, honouring the KOINOS_RPC override.
+    KOINOS_RPC takes one URL or a comma-separated priority list — e.g. your
+    own node first, a public API as the safety net:
+      KOINOS_RPC=https://rpc.yourdomain.com,https://api.koinos.io */
 function rpcCandidates(netName) {
   const net = NETWORKS[netName];
   if (!net) return [];
-  return process.env.KOINOS_RPC ? [process.env.KOINOS_RPC] : net.rpcs;
+  const own = String(process.env.KOINOS_RPC || '')
+    .split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean);
+  return own.length ? own : net.rpcs;
 }
 
 /** One Koinos JSON-RPC call, with a timeout. */

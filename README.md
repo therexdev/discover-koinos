@@ -90,7 +90,7 @@ node server.js
 |---|---|---|
 | `PORT` | `3000` | listen port |
 | `KOINOS_NETWORK` | `harbinger` | `harbinger` or `mainnet` |
-| `KOINOS_RPC` | *(probe list)* | pin one RPC URL (koinos.pro offers free API keys) |
+| `KOINOS_RPC` | *(probe list)* | your own RPC endpoint(s), comma-separated by priority — e.g. `https://rpc.you.com,https://api.koinos.io` (own node first, public as fallback). Needs the node's `jsonrpc` **and** `transaction_store` services |
 | `GATEWAY_DEV_WIF` | — | **the sponsor wallet.** Its mana pays for everything |
 | `GATEWAY_COLLECTION_WIF` | — | playground collection key (signs free mints) |
 | `GATEWAY_COLLECTION_ADDR` | — | playground collection address |
