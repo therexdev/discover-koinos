@@ -636,6 +636,7 @@ dialog.modal h3 { margin-top: 0; }
 .chat-msg.you .chat-text { background: rgba(93, 0, 179, .22); border-color: var(--line-strong); }
 .chat-thinking { color: var(--text-dim); font-style: italic; }
 .chat-err { margin-top: 6px; font-size: .85rem; color: var(--bad); }
+.chat-meta { margin-top: 5px; font-size: .74rem; color: var(--text-dim); }
 .chat-form { display: flex; gap: 10px; margin-top: 16px; }
 .chat-form input { flex: 1; min-width: 0; background: var(--bg-inset); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 12px 14px; color: var(--text-bright); font: inherit; }
 .chat-form input:focus { outline: none; border-color: var(--accent); }

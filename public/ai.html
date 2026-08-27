@@ -42,9 +42,10 @@
     <div class="chat-log" id="chat-log" aria-live="polite">
       <div class="chat-msg bot">
         <div class="chat-who">Koinos AI</div>
-        <div class="chat-text">Hi! I'm running on the Koinos AI network right now — somebody's own computer
-          is generating these words and earning KOIN for it. Ask me how Koinos works, what mana is,
-          how this site mints NFTs for free… or anything you're curious about.</div>
+        <!-- Keep this on ONE source line: .chat-text is white-space:pre-wrap
+             (streamed answers need their newlines), so source indentation
+             here would render literally. -->
+        <div class="chat-text">Hi! I'm running on the Koinos AI network right now — somebody's own computer is generating these words and earning KOIN for it. Ask me how Koinos works, what mana is, how this site mints NFTs for free… or anything you're curious about.</div>
       </div>
     </div>
     <form class="chat-form" id="chat-form">

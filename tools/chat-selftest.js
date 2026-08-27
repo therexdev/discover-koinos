@@ -123,6 +123,18 @@ async function test(name, fn) {
     }
   });
 
+  await test('static chat bubbles in ai.html are single-line (pre-wrap renders source newlines)', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'ai.html'), 'utf8');
+    const bubbles = [...html.matchAll(/<div class="chat-text">([\s\S]*?)<\/div>/g)];
+    assert.ok(bubbles.length >= 1, 'no static chat-text bubble found in ai.html');
+    for (const [, text] of bubbles) {
+      assert.ok(!/\n/.test(text),
+        'a static .chat-text spans multiple source lines — white-space:pre-wrap will render the line breaks and indentation literally');
+    }
+  });
+
   let failed = 0;
   for (const [status, name] of results) {
     if (status !== 'ok') failed++;
