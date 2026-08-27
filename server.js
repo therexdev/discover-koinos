@@ -109,7 +109,7 @@ const CFG = {
      chat page says the feature is off and nothing else changes. */
   kaiApiUrl: process.env.KAI_API_URL || '',
   kaiApiKey: process.env.KAI_API_KEY || '',
-  kaiChatModel: process.env.KAI_CHAT_MODEL || 'koinos-network',
+  kaiChatModel: process.env.KAI_CHAT_MODEL || 'koinos-network:koinos-balanced',
   maxChatsPerDay: parseInt(process.env.MAX_CHATS_PER_DAY || '400', 10),
 };
 
@@ -513,7 +513,7 @@ api.config = async () => {
       mintsPerDay: CFG.maxMintsPerDay,
       collectionsPerDay: CFG.maxCollectionsPerDay,
     },
-    aiChat: { enabled: kaiChat.enabled() },
+    aiChat: { enabled: kaiChat.enabled(), models: kaiChat.MODEL_CHOICES },
   };
 };
 
@@ -1387,9 +1387,14 @@ async function handleAiChat(req, res) {
     if (!question) throw httpError(400, 'ask something');
 
     const messages = kaiChat.buildMessages(question, body.history);
+    /* The page's model dropdown. kai-chat maps it through a closed list —
+       anything not on it (junk, an old cached page sending nothing, a
+       hand-rolled request naming a pricier class) falls back to the
+       configured default rather than erroring. */
+    const modelChoice = typeof body.model === 'string' ? body.model : '';
     let upstream;
     try {
-      upstream = await kaiChat.requestChat(messages);
+      upstream = await kaiChat.requestChat(messages, modelChoice);
     } catch (e) {
       /* The upstream is one real computer running Koinos AI. Unreachable
          means it is off or the tunnel is down — say so honestly. */

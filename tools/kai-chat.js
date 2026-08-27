@@ -4,11 +4,11 @@
 
    The app already serves an OpenAI-compatible API (default port 41100,
    /v1/chat/completions, Authorization: Bearer <api key> — keys are made in
-   the app). With model "koinos-network" the app signs the request with its
-   own earning account and the Koinos AI scheduler routes it to whichever
-   machine on the network holds the best live model — so the weak box this
-   site runs on only relays bytes, and usage is billed to the app's account
-   per AI token, exactly like any other consumer of that API.
+   the app). With a "koinos-network:<class>" model the app signs the request
+   with its own earning account and the Koinos AI scheduler routes it to a
+   machine serving that class — so the weak box this site runs on only
+   relays bytes, and usage is billed to the app's account per AI token,
+   exactly like any other consumer of that API.
 
    This module is deliberately nothing more than that: build the prompt,
    call the owner's API, hand back the stream. KAI_API_URL points at the
@@ -16,10 +16,22 @@
    KAI_API_KEY is a key minted in the app — never a wallet key. */
 'use strict';
 
+/* The classes a visitor may pick. A closed list, mapped server-side to the
+   app's "koinos-network:<class>" form — the browser sends only an id from
+   this list, so nobody can point the owner's paid account at a pricier
+   class than these. Balanced is the default: the network's common model,
+   served by more machines than the big ones. */
+const MODEL_CHOICES = [
+  { id: 'koinos-fast', label: '⚡ Fast', hint: 'quickest, simplest answers' },
+  { id: 'koinos-balanced', label: '⚖️ Balanced', hint: 'good answers at a good pace' },
+  { id: 'koinos-smart', label: '🧠 Smart', hint: 'deepest answers, slower' },
+];
+const MODEL_MAP = Object.fromEntries(MODEL_CHOICES.map(c => [c.id, 'koinos-network:' + c.id]));
+
 const K = {
   url: '',
   key: '',
-  model: 'koinos-network', // the app routes this to the network's best class
+  model: 'koinos-network:koinos-balanced', // fallback when the request names no (valid) choice
   /* Visitors ask short questions; these bounds exist so one visitor (or a
      script) can't stuff the paid prompt. max_tokens bounds the answer the
      same way. */
@@ -68,7 +80,8 @@ function buildMessages(question, history) {
 /* One request to the owner's app, streamed. Returns the upstream fetch
    Response — the caller owns relaying it. The app answers with standard
    OpenAI-style SSE chunks ending in "data: [DONE]". */
-async function requestChat(messages) {
+async function requestChat(messages, modelChoice) {
+  const model = MODEL_MAP[modelChoice] || K.model;
   return fetch(K.url + '/v1/chat/completions', {
     method: 'POST',
     /* Fresh TCP per request: NAT/routers silently drop idle pooled
@@ -79,9 +92,9 @@ async function requestChat(messages) {
       connection: 'close',
       ...(K.key ? { authorization: `Bearer ${K.key}` } : {}),
     },
-    body: JSON.stringify({ model: K.model, messages, stream: true, max_tokens: 512 }),
+    body: JSON.stringify({ model, messages, stream: true, max_tokens: 512 }),
     signal: AbortSignal.timeout(190000), // network answers can stream for minutes
   });
 }
 
-module.exports = { configure, enabled, buildMessages, requestChat, SYSTEM_PROMPT, K };
+module.exports = { configure, enabled, buildMessages, requestChat, SYSTEM_PROMPT, K, MODEL_CHOICES };
