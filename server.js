@@ -191,6 +191,26 @@ const registry = {
    create-launch flow; first writer wins, only the setter may replace. */
 const launchpadLogos = loadJson('launchpad-logos.json', {});
 const saveLaunchpadLogos = () => saveJson('launchpad-logos.json', launchpadLogos);
+/* Launch social links - keyed by launch id. Only the launch's on-chain
+   creator may write; anyone may read (public data). */
+const launchpadProfiles = loadJson('launchpad-profiles.json', {});
+const saveLaunchpadProfiles = () => saveJson('launchpad-profiles.json', launchpadProfiles);
+const PROFILE_LINK_KEYS = ['website', 'x', 'telegram', 'discord', 'github', 'facebook', 'youtube'];
+function sanitizeProfileLinks(raw) {
+  const links = {};
+  for (const key of PROFILE_LINK_KEYS) {
+    const value = String((raw || {})[key] || '').trim();
+    if (!value) continue;
+    if (value.length > 200) throw httpError(400, `${key} link is too long`);
+    let parsed;
+    try { parsed = new URL(value); } catch (_) { throw httpError(400, `${key} is not a valid URL`); }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      throw httpError(400, `${key} must be an http(s) link`);
+    }
+    links[key] = parsed.toString();
+  }
+  return links;
+}
 const tokenKeys = loadJson('token-keys.json', {});
 const collectionKeys = loadJson('collection-keys.json', {});
 const saveTokens = () => saveJson('tokens.json', registry.tokens);
@@ -668,6 +688,39 @@ api.launchpadLogo = async (body, ip, req) => {
   launchpadLogos[token] = { image: imagePath, by: address, at: Date.now() };
   saveLaunchpadLogos();
   return { ok: true, image: imagePath, url: originFor(req) + imagePath };
+};
+
+/* Set / update a launch's social links. Only the launch's CREATOR (verified
+   against the launchpad contract on-chain) may write, so a page's links can
+   never be hijacked by a stranger. */
+api.launchpadProfile = async (body, ip) => {
+  let address;
+  if (body && body.sessionToken) {
+    const sess = auth.verifySessionToken(body.sessionToken);
+    if (!sess) throw httpError(401, 'your session has expired — sign in again');
+    address = sess.addr;
+  } else {
+    const err = verifyProof(body, 'launchpad-profile');
+    if (err) throw httpError(400, err);
+    address = body.address;
+  }
+  const launchId = parseInt(body.launchId, 10);
+  if (!Number.isFinite(launchId) || launchId <= 0) throw httpError(400, 'a launch id is required');
+  if (rateLimited('lpprofile:addr:' + address, 20, 24 * 3600000)) throw httpError(429, 'too many profile updates today');
+  if (!chain.launchpadEnabled()) throw httpError(503, 'the launchpad is not configured here');
+  let creator = null;
+  try {
+    const { result } = await chain.launchpadContract().functions.get_launch({ launchId });
+    creator = result && result.value && result.value.creator;
+  } catch (e) {
+    throw httpError(503, 'could not read the launch from the chain — try again shortly');
+  }
+  if (!creator) throw httpError(404, 'no such launch');
+  if (creator !== address) throw httpError(403, 'only the launch creator can edit its links');
+  const links = sanitizeProfileLinks(body.links);
+  launchpadProfiles[String(launchId)] = { links, by: address, at: Date.now() };
+  saveLaunchpadProfiles();
+  return { ok: true, links };
 };
 
 api.session = async (body, ip) => {
@@ -1525,6 +1578,7 @@ const POST_ROUTES = {
   '/api/mint-nft': api.mintNft,
   '/api/launch-token': api.launchToken,
   '/api/launchpad-logo': api.launchpadLogo,
+  '/api/launchpad-profile': api.launchpadProfile,
   '/api/upload-nft': api.uploadNft,
   '/api/list-dex': api.listDex,
   '/api/auth': api.auth,
@@ -1538,7 +1592,7 @@ const POST_ROUTES = {
    that sign through this server). Everything else stays same-origin. Only an
    origin explicitly listed in SIGNER_ORIGINS is ever reflected, and only for
    /api/session and /api/sign. */
-const SIGNER_CORS_PATHS = new Set(['/api/session', '/api/sign', '/api/signer-config', '/api/launch-token', '/api/launchpad-logo']);
+const SIGNER_CORS_PATHS = new Set(['/api/session', '/api/sign', '/api/signer-config', '/api/launch-token', '/api/launchpad-logo', '/api/launchpad-profile']);
 function applySignerCors(req, res, pathname) {
   const origin = req.headers.origin;
   if (!origin || !SIGNER_CORS_PATHS.has(pathname)) return;
@@ -1593,6 +1647,16 @@ const server = http.createServer(async (req, res) => {
        promise merely RETURNED from inside a try block skips its catch. */
     if (pathname === '/api/ai-chat' && req.method === 'POST') return await handleAiChat(req, res);
 
+    if (pathname.startsWith('/api/launchpad-profile/') && (req.method === 'GET' || req.method === 'HEAD')) {
+      const id = String(parseInt(pathname.slice('/api/launchpad-profile/'.length), 10));
+      const profile = launchpadProfiles[id];
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'public, max-age=60',
+      });
+      return res.end(JSON.stringify({ ok: true, links: (profile && profile.links) || {} }));
+    }
     if (pathname.startsWith('/api/token-logo/') && (req.method === 'GET' || req.method === 'HEAD')) {
       const addr = decodeURIComponent(pathname.slice('/api/token-logo/'.length));
       const viaLaunchpad = launchpadLogos[addr];

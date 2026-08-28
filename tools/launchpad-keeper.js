@@ -52,6 +52,7 @@ function createLaunchpadKeeper(opts) {
   const manaFloor = opts.manaFloor != null ? opts.manaFloor : 6;
 
   const backoff = new Map(); // launch id -> { fails, until }
+  const marketEnsured = new Set(); // launch ids whose orderbook market exists
   let timer = null;
   let cycling = false;
 
@@ -115,6 +116,22 @@ function createLaunchpadKeeper(opts) {
       await chain.devTx([operation]);
       log(`keeper:   launch #${id} finalized`);
       return true;
+    }
+
+    // a successful launch also gets its TOKEN/KOIN market on the Trade
+    // Koinos orderbook (permissionless create; idempotent via lookup) so the
+    // launch page can link straight to trading
+    if (
+      (status === STATUS_DISTRIBUTING || status === STATUS_COMPLETED) &&
+      chain.dexEnabled() &&
+      !marketEnsured.has(id)
+    ) {
+      try {
+        await chain.ensureDexMarket(String(launch.token));
+        marketEnsured.add(id);
+      } catch (error) {
+        log(`keeper:   launch #${id} orderbook listing failed — ${error.message} (retrying next cycle)`);
+      }
     }
 
     // auto-liquidity: pair the earmarked KOIN + tokens on KoinDX once the

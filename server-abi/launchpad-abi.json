@@ -35,6 +35,13 @@
       "entry_point": 3596177968,
       "read_only": false
     },
+    "cancel_launch": {
+      "argument": "launchpad.cancel_launch_arguments",
+      "return": "launchpad.cancel_launch_result",
+      "description": "Cancel a launch before its end time (creator authority only). Every escrowed token (for-sale, locked, liquidity) returns to the creator immediately; buyers' KOIN comes back through process() refund batches. After the end time the sale settles by its terms instead.",
+      "entry_point": 4243972302,
+      "read_only": false
+    },
     "provide_liquidity": {
       "argument": "launchpad.provide_liquidity_arguments",
       "return": "launchpad.provide_liquidity_result",
@@ -520,6 +527,22 @@
           },
           "claim_locked_result": {
             "fields": {}
+          },
+          "cancel_launch_arguments": {
+            "fields": {
+              "launchId": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          },
+          "cancel_launch_result": {
+            "fields": {
+              "status": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
           },
           "provide_liquidity_arguments": {
             "fields": {
