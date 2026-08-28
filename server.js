@@ -29,6 +29,7 @@ const chain = require('./tools/koinos');
 const kaiChat = require('./tools/kai-chat');
 const { pickRpcs, NETWORKS } = require('./tools/rpc');
 const { nftCardPng } = require('./tools/png');
+const { createLaunchpadKeeper } = require('./tools/launchpad-keeper');
 
 /* ---------------- configuration ---------------- */
 
@@ -93,6 +94,10 @@ const CFG = {
   /* Trade Koinos orderbook DEX — mainnet only; no testnet deployment. */
   dexOrderbook: process.env.DEX_ORDERBOOK_ADDR ||
     ((process.env.KOINOS_NETWORK || 'harbinger') === 'mainnet' ? '1Bke72aGbpq4brDY3m1UQxRCGBB9GPTJQz' : ''),
+  /* Trade Koinos launchpad contract. When set (and the sponsor wallet is
+     configured) the keeper loop auto-settles launches: finalize at the end,
+     payout/refund batches, locked-token delivery at unlock. */
+  launchpadAddr: process.env.LAUNCHPAD_ADDRESS || '',
   tradeAppUrl: (process.env.TRADE_APP_URL || 'https://app.tradekoinos.com').replace(/\/+$/, ''),
 
   /* Uploaded NFT images (the "Upload" path). Stored on the gateway, served
@@ -625,6 +630,11 @@ api.signerConfig = async () => ({
   google: auth.signerEnabled(),
   googleClientId: auth.signerEnabled() ? auth.googleClientId() : null,
   sessionTtlMins: CFG.signerSessionTtlMins,
+  /* Launchpad extras for the trade app: where the launchpad contract lives
+     (auto-settled by this server's keeper) and whether this server can mint
+     fresh tokens for a session (sponsor wallet configured + not in demo). */
+  launchpad: CFG.launchpadAddr || null,
+  tokenLaunch: !DEMO && chain.enabled() && auth.signerEnabled(),
 });
 
 api.session = async (body, ip) => {
@@ -687,9 +697,21 @@ api.mintNft = async (body, ip, req) => {
 };
 
 api.launchToken = async (body, ip, req) => {
-  const err = verifyProof(body, 'launch-token');
-  if (err) throw httpError(400, err);
-  const address = body.address;
+  /* Two ways to prove who is launching: the browser-key proof (usekoinos'
+     own pages, OURO-style local wallets) or a signer SESSION token (Trade
+     Koinos Google users, whose key never enters a browser). The session
+     names its own address - body.address is ignored on that path, so a
+     stolen token still cannot launch for somebody else. */
+  let address;
+  if (body && body.sessionToken) {
+    const sess = auth.verifySessionToken(body.sessionToken);
+    if (!sess) throw httpError(401, 'your session has expired — sign in again');
+    address = sess.addr;
+  } else {
+    const err = verifyProof(body, 'launch-token');
+    if (err) throw httpError(400, err);
+    address = body.address;
+  }
   const name = cleanText(body.name, 64);
   const symbol = cleanText(body.symbol, 16).toUpperCase();
   const decimals = Number(body.decimals);
@@ -1482,7 +1504,7 @@ const POST_ROUTES = {
    that sign through this server). Everything else stays same-origin. Only an
    origin explicitly listed in SIGNER_ORIGINS is ever reflected, and only for
    /api/session and /api/sign. */
-const SIGNER_CORS_PATHS = new Set(['/api/session', '/api/sign', '/api/signer-config']);
+const SIGNER_CORS_PATHS = new Set(['/api/session', '/api/sign', '/api/signer-config', '/api/launch-token']);
 function applySignerCors(req, res, pathname) {
   const origin = req.headers.origin;
   if (!origin || !SIGNER_CORS_PATHS.has(pathname)) return;
@@ -1602,6 +1624,7 @@ const server = http.createServer(async (req, res) => {
         devWif: CFG.devWif,
         collectionAddr: CFG.collectionAddr, collectionWif: CFG.collectionWif,
         dexOrderbook: CFG.dexOrderbook,
+        launchpadAddr: CFG.launchpadAddr,
       });
       const [sponsorMana, sponsorKoin] = await Promise.all([
         chain.mana(chain.devAddress()), chain.koinBalance(chain.devAddress()),
@@ -1640,6 +1663,14 @@ const server = http.createServer(async (req, res) => {
         console.log('paint:    no Paint collection configured — run scripts/deploy-playground.js');
       }
       console.log(`dex:      ${chain.dexEnabled() ? 'Trade Koinos ' + CFG.dexOrderbook : 'off (mainnet only)'}`);
+      if (chain.launchpadEnabled()) {
+        createLaunchpadKeeper({
+          chain, manaFloor: CFG.minManaAction,
+          log: (m) => console.log(m),
+        }).start();
+      } else {
+        console.log('keeper:   launchpad OFF — set LAUNCHPAD_ADDRESS to auto-settle Trade Koinos launches');
+      }
       if (!fs.existsSync(TOKEN_WASM)) console.log('tokens:   WARNING — contracts/prebuilt/token/contract.wasm missing; token launches will fail');
       if (!fs.existsSync(COLLECTION_WASM)) console.log('upload:   WARNING — contracts/prebuilt/collection/contract.wasm missing; Upload collections will fail');
     } catch (e) {
