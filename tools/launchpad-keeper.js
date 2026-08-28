@@ -117,6 +117,35 @@ function createLaunchpadKeeper(opts) {
       return true;
     }
 
+    // auto-liquidity: pair the earmarked KOIN + tokens on KoinDX once the
+    // launch has settled successfully, and deliver the LP tokens to the
+    // creator when their lock expires. Both contract calls are permissionless
+    // and always pay the rightful party.
+    if (status === STATUS_DISTRIBUTING || status === STATUS_COMPLETED) {
+      const liqState = num(launch.liquidityState);
+      if (liqState === 1 && BigInt(launch.liquidityKoin || 0) > 0n) {
+        const { operation } = await chain
+          .launchpadContract(chain.devSigner())
+          .functions.provide_liquidity({ launchId: id }, { onlyOperation: true });
+        await chain.devTx([operation]);
+        log(`keeper:   launch #${id} liquidity added on KoinDX`);
+        return true;
+      }
+      if (
+        liqState === 2 &&
+        !launch.lpClaimed &&
+        BigInt(launch.lpAmount || 0) > 0n &&
+        now >= num(launch.lpUnlockTime) + CLOCK_SLACK_MS
+      ) {
+        const { operation } = await chain
+          .launchpadContract(chain.devSigner())
+          .functions.claim_liquidity({ launchId: id }, { onlyOperation: true });
+        await chain.devTx([operation]);
+        log(`keeper:   launch #${id} LP tokens delivered to creator`);
+        return true;
+      }
+    }
+
     if (status === STATUS_DISTRIBUTING || status === STATUS_REFUNDING) {
       const verb = status === STATUS_DISTRIBUTING ? 'paid out' : 'refunded';
       for (let batch = 0; batch < MAX_BATCHES_PER_CYCLE; batch++) {

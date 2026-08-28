@@ -187,6 +187,10 @@ const registry = {
 /* Contract account keys — the upgrade authority + free-mint authority for
    every launched token and collection. Owner-only file permissions, never
    logged, never sent to a browser. */
+/* Launchpad token logos - keyed by token address. Set from the trade app's
+   create-launch flow; first writer wins, only the setter may replace. */
+const launchpadLogos = loadJson('launchpad-logos.json', {});
+const saveLaunchpadLogos = () => saveJson('launchpad-logos.json', launchpadLogos);
 const tokenKeys = loadJson('token-keys.json', {});
 const collectionKeys = loadJson('collection-keys.json', {});
 const saveTokens = () => saveJson('tokens.json', registry.tokens);
@@ -636,6 +640,35 @@ api.signerConfig = async () => ({
   launchpad: CFG.launchpadAddr || null,
   tokenLaunch: !DEMO && chain.enabled() && auth.signerEnabled(),
 });
+
+/* Attach a logo to a token for the launchpad (any live token, not just ones
+   minted here). Auth mirrors launch-token: a signer session names its own
+   address, or the browser-key proof does. First writer wins per token; only
+   the original setter may replace their logo. */
+api.launchpadLogo = async (body, ip, req) => {
+  let address;
+  if (body && body.sessionToken) {
+    const sess = auth.verifySessionToken(body.sessionToken);
+    if (!sess) throw httpError(401, 'your session has expired — sign in again');
+    address = sess.addr;
+  } else {
+    const err = verifyProof(body, 'launchpad-logo');
+    if (err) throw httpError(400, err);
+    address = body.address;
+  }
+  const token = String(body.token || '');
+  if (!chain.isAddr(token)) throw httpError(400, 'a valid token address is required');
+  if (rateLimited('lplogo:addr:' + address, 10, 24 * 3600000)) throw httpError(429, 'too many logo updates today');
+  const existing = launchpadLogos[token];
+  if (existing && existing.by !== address) {
+    throw httpError(403, 'this token already has a logo set by its launcher');
+  }
+  const img = decodeUploadImage(body.logo);
+  const imagePath = '/uploads/' + storeUpload(img.buf, img.ext);
+  launchpadLogos[token] = { image: imagePath, by: address, at: Date.now() };
+  saveLaunchpadLogos();
+  return { ok: true, image: imagePath, url: originFor(req) + imagePath };
+};
 
 api.session = async (body, ip) => {
   if (rateLimited('session:ip:' + ip, 30, 3600000)) throw httpError(429, 'too many sign-in attempts — wait a few minutes');
@@ -1491,6 +1524,7 @@ const GET_ROUTES = {
 const POST_ROUTES = {
   '/api/mint-nft': api.mintNft,
   '/api/launch-token': api.launchToken,
+  '/api/launchpad-logo': api.launchpadLogo,
   '/api/upload-nft': api.uploadNft,
   '/api/list-dex': api.listDex,
   '/api/auth': api.auth,
@@ -1504,7 +1538,7 @@ const POST_ROUTES = {
    that sign through this server). Everything else stays same-origin. Only an
    origin explicitly listed in SIGNER_ORIGINS is ever reflected, and only for
    /api/session and /api/sign. */
-const SIGNER_CORS_PATHS = new Set(['/api/session', '/api/sign', '/api/signer-config', '/api/launch-token']);
+const SIGNER_CORS_PATHS = new Set(['/api/session', '/api/sign', '/api/signer-config', '/api/launch-token', '/api/launchpad-logo']);
 function applySignerCors(req, res, pathname) {
   const origin = req.headers.origin;
   if (!origin || !SIGNER_CORS_PATHS.has(pathname)) return;
@@ -1559,6 +1593,15 @@ const server = http.createServer(async (req, res) => {
        promise merely RETURNED from inside a try block skips its catch. */
     if (pathname === '/api/ai-chat' && req.method === 'POST') return await handleAiChat(req, res);
 
+    if (pathname.startsWith('/api/token-logo/') && (req.method === 'GET' || req.method === 'HEAD')) {
+      const addr = decodeURIComponent(pathname.slice('/api/token-logo/'.length));
+      const viaLaunchpad = launchpadLogos[addr];
+      const viaRegistry = registry.tokens.find(t => t.address === addr && t.image);
+      const image = (viaLaunchpad && viaLaunchpad.image) || (viaRegistry && viaRegistry.image);
+      if (!image) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end('{"error":"no logo"}'); }
+      res.writeHead(302, { Location: originFor(req) + image, 'Cache-Control': 'public, max-age=300' });
+      return res.end();
+    }
     if (pathname.startsWith('/api/')) {
       res.setHeader('Content-Type', 'application/json');
       let out;
@@ -1574,8 +1617,8 @@ const server = http.createServer(async (req, res) => {
         if (pathname === '/api/upload-nft') {
           if (rateLimited('upload:ip:' + clientIp(req), 15, 24 * 3600000)) throw httpError(429, 'too many uploads from this connection today');
           cap = Math.ceil(CFG.maxUploadBytes * 10 * 4 / 3) + 64 * 1024;
-        } else if (pathname === '/api/launch-token') {
-          // One optional base64 logo rides along with a launch.
+        } else if (pathname === '/api/launch-token' || pathname === '/api/launchpad-logo') {
+          // One optional base64 logo rides along.
           if (rateLimited('launchbody:ip:' + clientIp(req), 12, 24 * 3600000)) throw httpError(429, 'too many launch attempts from this connection today');
           cap = Math.ceil(CFG.maxUploadBytes * 4 / 3) + 64 * 1024;
         }

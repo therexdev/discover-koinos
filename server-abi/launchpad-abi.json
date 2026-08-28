@@ -35,6 +35,27 @@
       "entry_point": 3596177968,
       "read_only": false
     },
+    "provide_liquidity": {
+      "argument": "launchpad.provide_liquidity_arguments",
+      "return": "launchpad.provide_liquidity_result",
+      "description": "Pair the held-back KOIN with the escrowed liquidity tokens on KoinDX (creates the pair if needed) and lock the LP tokens here until lp_unlock_time. Callable by anyone once a launch with liquidity settles; retryable - a failed KoinDX call changes nothing.",
+      "entry_point": 664964575,
+      "read_only": false
+    },
+    "claim_liquidity": {
+      "argument": "launchpad.claim_liquidity_arguments",
+      "return": "launchpad.claim_liquidity_result",
+      "description": "Deliver a launch's unlocked KoinDX LP tokens to its creator once lp_unlock_time has passed. Callable by anyone; the destination is always the creator.",
+      "entry_point": 2109732178,
+      "read_only": false
+    },
+    "reclaim_liquidity": {
+      "argument": "launchpad.reclaim_liquidity_arguments",
+      "return": "launchpad.reclaim_liquidity_result",
+      "description": "Creator escape hatch: if providing liquidity has kept failing for 7 days past the sale end, reclaim the earmarked KOIN + tokens (creator authority). The launch page shows this state to buyers.",
+      "entry_point": 291303152,
+      "read_only": false
+    },
     "get_launches": {
       "argument": "launchpad.get_launches_arguments",
       "return": "launchpad.get_launches_result",
@@ -202,6 +223,53 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "liquidityBps": {
+                "type": "uint32",
+                "id": 23
+              },
+              "liquidityTokens": {
+                "type": "uint64",
+                "id": 24,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "lpUnlockTime": {
+                "type": "uint64",
+                "id": 25,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "liquidityState": {
+                "type": "uint32",
+                "id": 26
+              },
+              "pair": {
+                "type": "bytes",
+                "id": 27,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "lpAmount": {
+                "type": "uint64",
+                "id": 28,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "lpClaimed": {
+                "type": "bool",
+                "id": 29
+              },
+              "liquidityKoin": {
+                "type": "uint64",
+                "id": 30,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },
@@ -329,6 +397,24 @@
               "unsoldAction": {
                 "type": "uint32",
                 "id": 12
+              },
+              "liquidityBps": {
+                "type": "uint32",
+                "id": 13
+              },
+              "liquidityTokens": {
+                "type": "uint64",
+                "id": 14,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "lpUnlockTime": {
+                "type": "uint64",
+                "id": 15,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },
@@ -433,6 +519,51 @@
             }
           },
           "claim_locked_result": {
+            "fields": {}
+          },
+          "provide_liquidity_arguments": {
+            "fields": {
+              "launchId": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          },
+          "provide_liquidity_result": {
+            "fields": {
+              "liquidityState": {
+                "type": "uint32",
+                "id": 1
+              },
+              "lpAmount": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "claim_liquidity_arguments": {
+            "fields": {
+              "launchId": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          },
+          "claim_liquidity_result": {
+            "fields": {}
+          },
+          "reclaim_liquidity_arguments": {
+            "fields": {
+              "launchId": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          },
+          "reclaim_liquidity_result": {
             "fields": {}
           },
           "get_launches_arguments": {
@@ -616,6 +747,181 @@
                 }
               },
               "amount": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "liquidity_provided_event": {
+            "fields": {
+              "launchId": {
+                "type": "uint32",
+                "id": 1
+              },
+              "pair": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "lpAmount": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "koin": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "tokens": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "liquidity_reclaimed_event": {
+            "fields": {
+              "launchId": {
+                "type": "uint32",
+                "id": 1
+              },
+              "creator": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "lp_claimed_event": {
+            "fields": {
+              "launchId": {
+                "type": "uint32",
+                "id": 1
+              },
+              "creator": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "lpAmount": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "dex_pair_call": {
+            "fields": {
+              "tokenA": {
+                "type": "string",
+                "id": 1
+              },
+              "tokenB": {
+                "type": "string",
+                "id": 2
+              }
+            }
+          },
+          "dex_address": {
+            "fields": {
+              "value": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "dex_add_liquidity_call": {
+            "fields": {
+              "from": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "receiver": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "tokenA": {
+                "type": "string",
+                "id": 3
+              },
+              "tokenB": {
+                "type": "string",
+                "id": 4
+              },
+              "amountADesired": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "amountBDesired": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "amountAMin": {
+                "type": "uint64",
+                "id": 7,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "amountBMin": {
+                "type": "uint64",
+                "id": 8,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "dex_add_liquidity_answer": {
+            "fields": {
+              "liquidity": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "amountA": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "amountB": {
                 "type": "uint64",
                 "id": 3,
                 "options": {
