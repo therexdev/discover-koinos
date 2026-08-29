@@ -12,6 +12,9 @@
      ACTIVE past its end (or a FIXED sale sold out early)  -> finalize
      DISTRIBUTING / REFUNDING                              -> process batches
      COMPLETED with an expired lock                        -> claim_locked
+     liquidity pending (after payouts, isolated)           -> create the
+        KoinDX pool if missing (tools/koindx.js), provide_liquidity,
+        then claim_liquidity for the creator once the LP lock expires
 
    Everything it calls is permissionless-by-design on the contract side
    (finalize/process/claim_locked are callable by anyone and always pay
@@ -23,6 +26,8 @@
    floor keeps settlement from eating the budget interactive actions need.
    ============================================================ */
 'use strict';
+
+const koindx = require('./koindx');
 
 const STATUS_ACTIVE = 0;
 const STATUS_DISTRIBUTING = 1;
@@ -42,6 +47,11 @@ const MAX_BATCHES_PER_CYCLE = 5;
 
 /* Reads page at the contract's limit. */
 const PAGE = 100;
+
+/* Creating a KoinDX pool uploads a ~65KB contract — the priciest thing the
+   sponsor ever pays for (rcLimitUpload caps it at 80 KOIN of mana). Only
+   attempt it with clear headroom so ordinary settlement never starves. */
+const POOL_CREATE_MANA = 85;
 
 function createLaunchpadKeeper(opts) {
   const chain = opts.chain;                 // tools/koinos.js module
@@ -98,10 +108,58 @@ function createLaunchpadKeeper(opts) {
 
   const num = (v) => Number(v || 0);
 
+  /* One step of the KoinDX machine for this launch. Returns true when it
+     sent a transaction. Called in isolation: a DEX failure backs off ONLY
+     the liquidity step, never payouts or locks. */
+  async function liquidityStep(launch, now) {
+    const id = Number(launch.id);
+    const liqState = num(launch.liquidityState);
+
+    if (liqState === 1 && BigInt(launch.liquidityKoin || 0) > 0n) {
+      // the periphery only adds liquidity to an EXISTING pool, and pools
+      // are born from a dedicated 2-op transaction the keeper must send
+      // itself (see tools/koindx.js) — the contract cannot
+      const pair = await koindx.getPair(chain, String(launch.token));
+      if (!pair) {
+        const live = await chain.mana(chain.devAddress());
+        if (live < POOL_CREATE_MANA) {
+          log(`keeper:   launch #${id} waiting for sponsor mana ≥${POOL_CREATE_MANA} to create the KoinDX pool (${Math.floor(live)} now)`);
+          return false;
+        }
+        const made = await koindx.createPair(chain, String(launch.token), log);
+        log(`keeper:   launch #${id} KoinDX pool created at ${made.pair}`);
+        return true; // provide_liquidity follows next cycle
+      }
+      const { operation } = await chain
+        .launchpadContract(chain.devSigner())
+        .functions.provide_liquidity({ launchId: id }, { onlyOperation: true });
+      await chain.devTx([operation]);
+      log(`keeper:   launch #${id} liquidity added on KoinDX`);
+      return true;
+    }
+
+    if (
+      liqState === 2 &&
+      !launch.lpClaimed &&
+      BigInt(launch.lpAmount || 0) > 0n &&
+      now >= num(launch.lpUnlockTime) + CLOCK_SLACK_MS
+    ) {
+      const { operation } = await chain
+        .launchpadContract(chain.devSigner())
+        .functions.claim_liquidity({ launchId: id }, { onlyOperation: true });
+      await chain.devTx([operation]);
+      log(`keeper:   launch #${id} LP tokens delivered to creator`);
+      return true;
+    }
+
+    return false;
+  }
+
   async function settleOne(launch) {
     const id = Number(launch.id);
     const now = Date.now();
-    const status = num(launch.status);
+    let status = num(launch.status);
+    let acted = false;
 
     if (status === STATUS_ACTIVE) {
       const ended = now >= num(launch.endTime) + CLOCK_SLACK_MS;
@@ -118,9 +176,59 @@ function createLaunchpadKeeper(opts) {
       return true;
     }
 
-    // a successful launch also gets its TOKEN/KOIN market on the Trade
-    // Koinos orderbook (permissionless create; idempotent via lookup) so the
-    // launch page can link straight to trading
+    // 1 — buyers FIRST. Payouts (or refunds) are the launchpad's promise;
+    // they must never wait on markets or liquidity. A failure here throws
+    // to the caller and backs off the whole launch — distributing is the
+    // one thing there is no point continuing without.
+    if (status === STATUS_DISTRIBUTING || status === STATUS_REFUNDING) {
+      const verb = status === STATUS_DISTRIBUTING ? 'paid out' : 'refunded';
+      for (let batch = 0; batch < MAX_BATCHES_PER_CYCLE; batch++) {
+        const { operation } = await chain
+          .launchpadContract(chain.devSigner())
+          .functions.process(
+            { launchId: id, limit: PROCESS_BATCH },
+            { onlyOperation: true }
+          );
+        await chain.devTx([operation]);
+        acted = true;
+        const { result } = await chain
+          .launchpadContract()
+          .functions.get_launch({ launchId: id });
+        const fresh = result && result.value;
+        if (!fresh) break;
+        launch = fresh;
+        const pending = num(fresh.buyerCount) - num(fresh.cursor);
+        if (num(fresh.status) !== status || pending <= 0) {
+          log(`keeper:   launch #${id} fully ${verb} (${num(fresh.buyerCount)} buyers)`);
+          status = num(fresh.status);
+          break;
+        }
+        log(`keeper:   launch #${id} ${verb} batch done, ${pending} buyer(s) left`);
+        if (!(await manaOk())) return true;
+      }
+      if (status === STATUS_DISTRIBUTING || status === STATUS_REFUNDING) {
+        return acted; // not fully settled yet — later steps wait their turn
+      }
+    }
+
+    // 2 — the creator's own token lock, once everyone else is paid
+    if (
+      status === STATUS_COMPLETED &&
+      BigInt(launch.lockedAmount || 0) > 0n &&
+      !launch.lockedClaimed &&
+      now >= num(launch.unlockTime) + CLOCK_SLACK_MS
+    ) {
+      const { operation } = await chain
+        .launchpadContract(chain.devSigner())
+        .functions.claim_locked({ launchId: id }, { onlyOperation: true });
+      await chain.devTx([operation]);
+      log(`keeper:   launch #${id} locked tokens delivered to creator`);
+      acted = true;
+    }
+
+    // 3 — a successful launch gets its TOKEN/KOIN market on the Trade
+    // Koinos orderbook (permissionless create; idempotent via lookup) so
+    // the launch page can link straight to trading
     if (
       (status === STATUS_DISTRIBUTING || status === STATUS_COMPLETED) &&
       chain.dexEnabled() &&
@@ -134,78 +242,25 @@ function createLaunchpadKeeper(opts) {
       }
     }
 
-    // auto-liquidity: pair the earmarked KOIN + tokens on KoinDX once the
-    // launch has settled successfully, and deliver the LP tokens to the
-    // creator when their lock expires. Both contract calls are permissionless
-    // and always pay the rightful party.
+    // 4 — KoinDX liquidity: create the pool when missing, then
+    // provide_liquidity, then deliver the LP tokens when the lock expires.
+    // Isolated with its own backoff so a DEX hiccup can never starve
+    // payouts, locks, or other launches.
     if (status === STATUS_DISTRIBUTING || status === STATUS_COMPLETED) {
-      const liqState = num(launch.liquidityState);
-      if (liqState === 1 && BigInt(launch.liquidityKoin || 0) > 0n) {
-        const { operation } = await chain
-          .launchpadContract(chain.devSigner())
-          .functions.provide_liquidity({ launchId: id }, { onlyOperation: true });
-        await chain.devTx([operation]);
-        log(`keeper:   launch #${id} liquidity added on KoinDX`);
-        return true;
-      }
-      if (
-        liqState === 2 &&
-        !launch.lpClaimed &&
-        BigInt(launch.lpAmount || 0) > 0n &&
-        now >= num(launch.lpUnlockTime) + CLOCK_SLACK_MS
-      ) {
-        const { operation } = await chain
-          .launchpadContract(chain.devSigner())
-          .functions.claim_liquidity({ launchId: id }, { onlyOperation: true });
-        await chain.devTx([operation]);
-        log(`keeper:   launch #${id} LP tokens delivered to creator`);
-        return true;
-      }
-    }
-
-    if (status === STATUS_DISTRIBUTING || status === STATUS_REFUNDING) {
-      const verb = status === STATUS_DISTRIBUTING ? 'paid out' : 'refunded';
-      for (let batch = 0; batch < MAX_BATCHES_PER_CYCLE; batch++) {
-        const { operation } = await chain
-          .launchpadContract(chain.devSigner())
-          .functions.process(
-            { launchId: id, limit: PROCESS_BATCH },
-            { onlyOperation: true }
-          );
-        await chain.devTx([operation]);
-        const { result } = await chain
-          .launchpadContract()
-          .functions.get_launch({ launchId: id });
-        const fresh = result && result.value;
-        if (!fresh) break;
-        const pending =
-          num(fresh.buyerCount) - num(fresh.cursor);
-        if (num(fresh.status) !== status || pending <= 0) {
-          log(`keeper:   launch #${id} fully ${verb} (${num(fresh.buyerCount)} buyers)`);
-          return true;
+      const liqKey = `${id}:liq`;
+      if (!skipping(liqKey)) {
+        try {
+          if (await liquidityStep(launch, now)) {
+            succeeded(liqKey);
+            acted = true;
+          }
+        } catch (error) {
+          failed(liqKey, 'liquidity', error);
         }
-        log(`keeper:   launch #${id} ${verb} batch done, ${pending} buyer(s) left`);
-        if (!(await manaOk())) return true;
-      }
-      return true;
-    }
-
-    if (status === STATUS_COMPLETED) {
-      if (
-        BigInt(launch.lockedAmount || 0) > 0n &&
-        !launch.lockedClaimed &&
-        now >= num(launch.unlockTime) + CLOCK_SLACK_MS
-      ) {
-        const { operation } = await chain
-          .launchpadContract(chain.devSigner())
-          .functions.claim_locked({ launchId: id }, { onlyOperation: true });
-        await chain.devTx([operation]);
-        log(`keeper:   launch #${id} locked tokens delivered to creator`);
-        return true;
       }
     }
 
-    return false;
+    return acted;
   }
 
   async function cycle() {

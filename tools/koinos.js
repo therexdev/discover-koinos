@@ -345,8 +345,8 @@ async function opTokenBurn(tokenAddr, from, valueUnits) {
     { from, value: String(valueUnits) }, { onlyOperation: true });
   return operation;
 }
-async function opUploadContract(contractId, wasmBuffer) {
-  return {
+async function opUploadContract(contractId, wasmBuffer, flags) {
+  const op = {
     upload_contract: {
       contract_id: contractId,
       /* koilib's own encoder, NOT Buffer.toString('base64url'): the
@@ -354,6 +354,16 @@ async function opUploadContract(contractId, wasmBuffer) {
       bytecode: utils.encodeBase64url(wasmBuffer),
     },
   };
+  /* contractAuthority hands ALL authority to the uploaded contract itself
+     the moment it lands — the uploader's key keeps no power. KoinDX pool
+     uploads require exactly this (the periphery refuses pools whose key
+     could later upgrade them). */
+  if (flags && flags.contractAuthority) {
+    op.upload_contract.authorizes_call_contract = true;
+    op.upload_contract.authorizes_transaction_application = true;
+    op.upload_contract.authorizes_upload_contract = true;
+  }
+  return op;
 }
 async function opTokenInitialize(tokenAddr, spec) {
   const { operation } = await tokenContractAt(tokenAddr).functions.initialize({
