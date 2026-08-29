@@ -207,7 +207,7 @@ const UI = (() => {
     d.className = 'modal login-modal';
     d.innerHTML = `
       <h3>Get your Koinos account</h3>
-      <p class="sub">One account, four ways in. Everything on this site is free either way.</p>
+      <p class="sub">One account, your choice of door. Everything on this site is free either way.</p>
       <div class="auth-opts">
         <div id="auth-google" class="auth-opt g-wrap" style="position:relative" hidden>
           <span class="ic" aria-hidden="true"><svg class="g-mark" width="18" height="18" viewBox="0 0 48 48">
@@ -224,6 +224,7 @@ const UI = (() => {
             style="position:absolute;top:0;left:0;right:0;bottom:0;overflow:hidden;opacity:.001;display:flex;align-items:center;justify-content:center"></div>
         </div>
         <button class="auth-opt" id="auth-x" hidden><span class="ic">𝕏</span> Continue with X</button>
+        <button class="auth-opt" id="auth-passkey" hidden><span class="ic">👆</span> <span id="auth-passkey-label">Continue with Passkey</span> <em>biometric</em></button>
         <button class="auth-opt primary" id="auth-local"><span class="ic">🔑</span> Create a Local Wallet <em>recommended</em></button>
         <button class="auth-opt" id="auth-import-toggle"><span class="ic">📥</span> Import a private key</button>
         <div id="auth-import" hidden>
@@ -232,8 +233,9 @@ const UI = (() => {
           </label>
           <button class="btn small" id="auth-import-go">Import</button>
         </div>
+        <p class="hint" id="auth-passkey-alt" hidden style="margin:0">Made a passkey wallet before, on another device? <a href="#" id="auth-passkey-unlock">Unlock it here</a> — your synced passkeys will be offered.</p>
       </div>
-      <p class="hint" id="auth-custodial-note"><strong>Google</strong> opens the <strong>same wallet</strong> you have in Aurvania and on OURO — one address across every Koinos site. Google and X hand the key to this browser when you sign in, and you can export it any time on the Wallet page. A Local Wallet never leaves your device.</p>
+      <p class="hint" id="auth-custodial-note"><strong>Google</strong> opens the <strong>same wallet</strong> you have in Aurvania and on OURO — one address across every Koinos site. Google and X hand the key to this browser when you sign in, and you can export it any time on the Wallet page. A Local Wallet never leaves your device. A <strong>Passkey</strong> wallet is sealed by your device itself — your face, fingerprint or PIN re-creates the key, on every device your passkeys sync to, and no server ever sees it.</p>
       <div style="text-align:right;margin-top:14px"><button class="btn ghost small" id="auth-close">Close</button></div>`;
     document.body.appendChild(d);
     _modal = d;
@@ -252,6 +254,29 @@ const UI = (() => {
       catch (_) { toast('That does not look like a valid WIF key', 'err'); }
     });
     $('#auth-x', d).addEventListener('click', () => { location.href = '/auth/x/login'; });
+
+    /* Passkey: one biometric scan creates (or re-opens) the wallet. */
+    const finishPasskey = (r) => {
+      markDone('wallet'); d.close();
+      toast((r.created ? 'Wallet created with your passkey — ' : 'Welcome back — ') + short(r.address), 'ok');
+    };
+    const passkeyFail = (e) => {
+      if (e && e.name === 'NotAllowedError') toast('Passkey prompt closed — nothing changed', '');
+      else if (e && e.name === 'InvalidStateError') toast('This device already holds a passkey wallet — it opens with Unlock', 'err');
+      else toast((e && e.message) || 'Passkey sign-in failed', 'err');
+    };
+    $('#auth-passkey', d).addEventListener('click', async () => {
+      const b = $('#auth-passkey', d);
+      b.disabled = true;
+      try { finishPasskey(Passkey.remembered() ? await Passkey.unlock() : await Passkey.create()); }
+      catch (e) { passkeyFail(e); }
+      finally { b.disabled = false; }
+    });
+    $('#auth-passkey-unlock', d).addEventListener('click', async (e) => {
+      e.preventDefault();
+      try { finishPasskey(await Passkey.unlock()); }
+      catch (err) { passkeyFail(err); }
+    });
     return d;
   }
 
@@ -264,6 +289,17 @@ const UI = (() => {
     // Show our Google face as soon as Google is configured — the invisible
     // click target attaches when GSI lands (or we mark it dead if it never does).
     if (g) { g.hidden = !_googleConfigured; if (_googleConfigured) { renderGoogleButton(); armGoogleFallback(g); } }
+    // Passkey: only where a biometric/PIN platform authenticator exists.
+    if (typeof Passkey !== 'undefined') {
+      Passkey.platformReady().then((ok) => {
+        const pk = $('#auth-passkey', d), alt = $('#auth-passkey-alt', d);
+        if (pk) {
+          pk.hidden = !ok;
+          $('#auth-passkey-label', d).textContent = Passkey.remembered() ? 'Unlock with Passkey' : 'Create with Passkey';
+        }
+        if (alt) alt.hidden = !ok || Passkey.remembered();
+      }).catch(() => {});
+    }
     if (typeof d.showModal === 'function') d.showModal(); else d.setAttribute('open', '');
   }
 
@@ -377,7 +413,7 @@ const UI = (() => {
     $('#acct-logout', m).addEventListener('click', () => {
       m.remove(); _menu = null;
       const backed = sessionStorage.getItem('dk_backed_up') === '1';
-      if (!backed && !confirm('Log out?\n\nIf this is a Local Wallet you have not backed up, its key will be gone for good. Social accounts (Google/X) can be recovered by signing in again.')) return;
+      if (!backed && !confirm('Log out?\n\nIf this is a Local Wallet you have not backed up, its key will be gone for good. Social accounts (Google/X) and Passkey wallets can be recovered by signing in again.')) return;
       Wallet.logout();
       toast('Logged out', 'ok');
     });

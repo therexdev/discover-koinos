@@ -168,6 +168,14 @@ Four ways in, all converging on the same thing — the browser ends up holding
 a Koinos key and signs locally:
 
 - **Local Wallet** (recommended, non-custodial) — generated in the browser, never leaves it.
+- **Passkey** (non-custodial, biometric) — one Face ID / fingerprint / PIN scan both
+  creates and re-opens the wallet. WebAuthn's PRF extension makes the device's
+  authenticator emit a deterministic secret (salt `discover-koinos:wallet:v1` —
+  changing it would change every passkey wallet's address), which is hashed into
+  the secp256k1 key. Nothing is stored server-side and no on-chain setup is
+  needed; synced passkeys (iCloud/Google) open the same wallet on the user's
+  other devices. Shown only where a platform authenticator exists; devices
+  without PRF get a clear error and the other methods.
 - **Import** — paste a WIF backup.
 - **Google** — opens the **same wallet the same Google account has in Aurvania
   and on OURO** — one identity, one address, every Koinos site. That shared
