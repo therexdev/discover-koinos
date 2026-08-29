@@ -45,6 +45,13 @@ const CACHE_FILE = path.join(DATA_DIR, 'koindx-pool.wasm');
    calls for add_liquidity, from @koindx/v2-sdk. */
 const PERIPHERY_B58 = '17e1q6Fh5RgnuA8K7v4KvXXH4k9qHgsT5s';
 
+/* KoinDX identifies chain-native tokens by NAMESPACE, not address: every
+   canonical pair keys KOIN as the literal string "koin" (and VHP as
+   "vhp") — the koindx token-list says so verbatim. Asking get_pair with
+   the base58 KOIN address finds nothing, ever. */
+const KOIN_DEX_ID = 'koin';
+const VHP_DEX_ID = 'vhp';
+
 let _bytecode = null; // Buffer, memoized
 
 function peripheryContract(chain, signer) {
@@ -59,7 +66,7 @@ function peripheryContract(chain, signer) {
 /** Pool (pair) contract address for KOIN/token, or null if none exists. */
 async function getPair(chain, tokenB58) {
   const { result } = await peripheryContract(chain).functions.get_pair({
-    tokenA: chain.net().koinContract,
+    tokenA: KOIN_DEX_ID,
     tokenB: tokenB58,
   });
   const value = result && result.value;
@@ -80,9 +87,8 @@ async function poolBytecode(chain, log) {
 
   // the KOIN/VHP pool has existed since KoinDX launched and its first
   // account-history entry is the 2-op creation transaction we mirror
-  const sourceToken = chain.net().vhpContract;
-  const sourcePair = await getPair(chain, sourceToken);
-  if (!sourcePair) throw new Error('KoinDX KOIN/VHP pool not found - cannot learn the pool bytecode');
+  const sourcePair = await getPair(chain, VHP_DEX_ID);
+  if (!sourcePair) throw new Error('KoinDX koin/vhp pool not found - cannot learn the pool bytecode');
 
   const history = await chain.provider().call('account_history.get_account_history', {
     address: sourcePair,
@@ -123,7 +129,7 @@ async function createPair(chain, tokenB58, log) {
     contractAuthority: true,
   });
   const { operation: createOp } = await peripheryContract(chain, poolKey).functions.create_pair(
-    { tokenA: chain.net().koinContract, tokenB: tokenB58 },
+    { tokenA: KOIN_DEX_ID, tokenB: tokenB58 },
     { onlyOperation: true }
   );
 
