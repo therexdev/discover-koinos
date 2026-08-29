@@ -26,6 +26,11 @@
    ============================================================ */
 'use strict';
 
+/* Bumped with every change here; the keeper prints it at boot so
+   /api/keeper-log proves which koindx build a host is actually running
+   (a live host was observed with a NEWER keeper and an OLDER koindx). */
+const VERSION = 'v4-candidates';
+
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -140,7 +145,7 @@ async function bytecodesFromKoindxApp(log) {
         } catch (_) {}
       }
     }
-    if (log && found.length) log(`koindx:   found ${found.length} wasm candidate(s) in the KoinDX app bundle`);
+    if (log) log(`koindx:   KoinDX app bundle scan: ${found.length} wasm candidate(s) across ${urls.size} script file(s)`);
   } catch (error) {
     if (log) log(`koindx:   could not read the KoinDX app bundle — ${error.message}`);
   }
@@ -195,6 +200,7 @@ async function candidateBytecodes(chain, log) {
   } catch (_) {}
   for (const wasm of await bytecodesFromKoindxApp(log)) push(wasm, 'koindx app');
   push(await bytecodeFromDonorPool(chain, log), 'donor pool');
+  if (log) log(`koindx:   ${out.length} untried candidate(s): ${out.map((c) => `${c.from} ${c.hash.slice(0, 12)}…`).join(', ') || 'none'}`);
   return out;
 }
 
@@ -245,4 +251,4 @@ async function createPair(chain, tokenB58, log) {
   throw lastError || new Error('pool creation failed');
 }
 
-module.exports = { getPair, createPair, PERIPHERY_B58 };
+module.exports = { getPair, createPair, PERIPHERY_B58, VERSION };

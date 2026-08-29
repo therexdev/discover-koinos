@@ -309,7 +309,7 @@ function createLaunchpadKeeper(opts) {
       log(`keeper:   watching launchpad ${chain.K.launchpadAddr} (every ${Math.round(intervalMs / 1000)}s)`);
       /* bumped on every keeper/koindx change: the ONLY reliable way to see
          from /api/keeper-log which build a host is actually running */
-      log('keeper:   code v4 — pool-bytecode candidates from the KoinDX app, bad hashes remembered');
+      log(`keeper:   code v5, koindx module ${koindx.VERSION || 'STALE (pre-v4 — deploy did not replace tools/koindx.js!)'}`);
     },
     stop() {
       if (timer) clearInterval(timer);
