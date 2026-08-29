@@ -546,6 +546,16 @@ api.config = async () => {
   };
 };
 
+/* The launchpad keeper's recent narration, readable from a browser — the
+   fastest way to see WHY a launch isn't settling without shell access.
+   Contains only the keeper's own status lines, never keys or user data. */
+let launchpadKeeper = null;
+api.keeperLog = async () => ({
+  ok: true,
+  running: !!launchpadKeeper,
+  lines: launchpadKeeper ? launchpadKeeper.recentLog() : [],
+});
+
 let _statsCache = { at: 0, value: null };
 api.stats = async () => {
   if (DEMO) {
@@ -1569,6 +1579,7 @@ const GET_ROUTES = {
   '/api/config': api.config,
   '/api/signer-config': api.signerConfig,
   '/api/stats': api.stats,
+  '/api/keeper-log': api.keeperLog,
   '/api/account': api.account,
   '/api/collections': api.collections,
   '/api/gallery': api.gallery,
@@ -1771,10 +1782,11 @@ const server = http.createServer(async (req, res) => {
       }
       console.log(`dex:      ${chain.dexEnabled() ? 'Trade Koinos ' + CFG.dexOrderbook : 'off (mainnet only)'}`);
       if (chain.launchpadEnabled()) {
-        createLaunchpadKeeper({
+        launchpadKeeper = createLaunchpadKeeper({
           chain, manaFloor: CFG.minManaAction,
           log: (m) => console.log(m),
-        }).start();
+        });
+        launchpadKeeper.start();
       } else {
         console.log('keeper:   launchpad OFF — set LAUNCHPAD_ADDRESS to auto-settle Trade Koinos launches');
       }

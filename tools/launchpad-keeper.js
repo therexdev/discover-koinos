@@ -55,7 +55,16 @@ const POOL_CREATE_MANA = 85;
 
 function createLaunchpadKeeper(opts) {
   const chain = opts.chain;                 // tools/koinos.js module
-  const log = opts.log || ((m) => console.log(m));
+  const rawLog = opts.log || ((m) => console.log(m));
+  /* Every keeper line also lands in a small ring buffer served at
+     /api/keeper-log — settlement problems must be diagnosable from a
+     browser, without shell access to the host. */
+  const recent = [];
+  const log = (m) => {
+    recent.push(`${new Date().toISOString().slice(0, 19).replace('T', ' ')} ${m}`);
+    if (recent.length > 100) recent.shift();
+    rawLog(m);
+  };
   const intervalMs = opts.intervalMs || 45000;
   /* Refuse to settle when sponsor mana drops under this (KOIN) — the same
      idea as the server's minManaAction floor. */
@@ -70,10 +79,10 @@ function createLaunchpadKeeper(opts) {
     const entry = backoff.get(id);
     return !!(entry && Date.now() < entry.until);
   };
-  const failed = (id, what, error) => {
+  const failed = (id, what, error, capMinutes = 60) => {
     const entry = backoff.get(id) || { fails: 0, until: 0 };
     entry.fails += 1;
-    const wait = Math.min(60, 2 ** entry.fails) * 60000;
+    const wait = Math.min(capMinutes, 2 ** entry.fails) * 60000;
     entry.until = Date.now() + wait;
     backoff.set(id, entry);
     log(`keeper:   launch #${id} ${what} failed — ${error.message} (next try in ${Math.round(wait / 60000)}m)`);
@@ -255,7 +264,10 @@ function createLaunchpadKeeper(opts) {
             acted = true;
           }
         } catch (error) {
-          failed(liqKey, 'liquidity', error);
+          /* the DEX leg retries much sooner than broken-launch backoff:
+             10 minutes at worst (2, 4, 8, 10, 10 …) — a reverting attempt
+             costs a little mana, but a settled pool shouldn't wait an hour */
+          failed(liqKey, 'liquidity', error, 10);
         }
       }
     }
@@ -300,6 +312,7 @@ function createLaunchpadKeeper(opts) {
       if (timer) clearInterval(timer);
       timer = null;
     },
+    recentLog: () => recent.slice(),
     cycle, // exposed for tests / manual pokes
   };
 }
