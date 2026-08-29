@@ -307,6 +307,9 @@ function createLaunchpadKeeper(opts) {
       // first look shortly after boot, once the chain config has settled
       setTimeout(() => void cycle(), 5000);
       log(`keeper:   watching launchpad ${chain.K.launchpadAddr} (every ${Math.round(intervalMs / 1000)}s)`);
+      /* bumped on every keeper/koindx change: the ONLY reliable way to see
+         from /api/keeper-log which build a host is actually running */
+      log('keeper:   code v4 — pool-bytecode candidates from the KoinDX app, bad hashes remembered');
     },
     stop() {
       if (timer) clearInterval(timer);
