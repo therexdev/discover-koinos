@@ -119,30 +119,44 @@ function createLaunchpadKeeper(opts) {
 
   /* One step of the KoinDX machine for this launch. Returns true when it
      sent a transaction. Called in isolation: a DEX failure backs off ONLY
-     the liquidity step, never payouts or locks. */
+     the liquidity step, never payouts or locks. Every chain interaction is
+     labeled so a failure line in /api/keeper-log names the exact call —
+     debugging this remotely by deduction proved worthless. */
   async function liquidityStep(launch, now) {
     const id = Number(launch.id);
     const liqState = num(launch.liquidityState);
+    const at = async (label, fn) => {
+      try {
+        return await fn();
+      } catch (error) {
+        error.message = `[${label}] ${error.message}`;
+        throw error;
+      }
+    };
 
     if (liqState === 1 && BigInt(launch.liquidityKoin || 0) > 0n) {
       // the periphery only adds liquidity to an EXISTING pool, and pools
       // are born from a dedicated 2-op transaction the keeper must send
       // itself (see tools/koindx.js) — the contract cannot
-      const pair = await koindx.getPair(chain, String(launch.token));
+      const token = String(launch.token);
+      const pair = await at(`get_pair ${token.slice(0, 8)}…`, () => koindx.getPair(chain, token));
       if (!pair) {
-        const live = await chain.mana(chain.devAddress());
+        const live = await at('read sponsor mana', () => chain.mana(chain.devAddress()));
         if (live < POOL_CREATE_MANA) {
           log(`keeper:   launch #${id} waiting for sponsor mana ≥${POOL_CREATE_MANA} to create the KoinDX pool (${Math.floor(live)} now)`);
           return false;
         }
-        const made = await koindx.createPair(chain, String(launch.token), log);
+        const made = await at('create_pair', () => koindx.createPair(chain, token, log));
         log(`keeper:   launch #${id} KoinDX pool created at ${made.pair}`);
         return true; // provide_liquidity follows next cycle
       }
-      const { operation } = await chain
-        .launchpadContract(chain.devSigner())
-        .functions.provide_liquidity({ launchId: id }, { onlyOperation: true });
-      await chain.devTx([operation]);
+      log(`keeper:   launch #${id} pool exists at ${pair} — calling provide_liquidity`);
+      const { operation } = await at('build provide_liquidity op', () =>
+        chain
+          .launchpadContract(chain.devSigner())
+          .functions.provide_liquidity({ launchId: id }, { onlyOperation: true })
+      );
+      await at('provide_liquidity tx', () => chain.devTx([operation]));
       log(`keeper:   launch #${id} liquidity added on KoinDX`);
       return true;
     }
@@ -153,10 +167,12 @@ function createLaunchpadKeeper(opts) {
       BigInt(launch.lpAmount || 0) > 0n &&
       now >= num(launch.lpUnlockTime) + CLOCK_SLACK_MS
     ) {
-      const { operation } = await chain
-        .launchpadContract(chain.devSigner())
-        .functions.claim_liquidity({ launchId: id }, { onlyOperation: true });
-      await chain.devTx([operation]);
+      const { operation } = await at('build claim_liquidity op', () =>
+        chain
+          .launchpadContract(chain.devSigner())
+          .functions.claim_liquidity({ launchId: id }, { onlyOperation: true })
+      );
+      await at('claim_liquidity tx', () => chain.devTx([operation]));
       log(`keeper:   launch #${id} LP tokens delivered to creator`);
       return true;
     }
@@ -309,7 +325,7 @@ function createLaunchpadKeeper(opts) {
       log(`keeper:   watching launchpad ${chain.K.launchpadAddr} (every ${Math.round(intervalMs / 1000)}s)`);
       /* bumped on every keeper/koindx change: the ONLY reliable way to see
          from /api/keeper-log which build a host is actually running */
-      log(`keeper:   code v5, koindx module ${koindx.VERSION || 'STALE (pre-v4 — deploy did not replace tools/koindx.js!)'}`);
+      log(`keeper:   code v6, koindx module ${koindx.VERSION || 'STALE (pre-v4 — deploy did not replace tools/koindx.js!)'}`);
     },
     stop() {
       if (timer) clearInterval(timer);
