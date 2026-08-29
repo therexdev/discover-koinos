@@ -66,9 +66,9 @@ const CFG = {
   publicOrigin: process.env.PUBLIC_ORIGIN || '',
 
   /* Google sign-in is BRIDGED to Aurvania so the wallet matches the one the
-     same Google account has in Aurvania and on OURO. aurvania.quest 403s
+     same Google account has in Aurvania and on OURO. aurvania.com 403s
      unfamiliar User-Agents, hence the curl-like bridge identity. */
-  aurvaniaApi: (process.env.AURVANIA_API || 'https://aurvania.quest').replace(/\/+$/, ''),
+  aurvaniaApi: (process.env.AURVANIA_API || 'https://aurvania.com').replace(/\/+$/, ''),
   bridgeUa: (process.env.BRIDGE_UA || 'curl/8.5.0 (Discover-Koinos gateway)').trim(),
   // overridable only so the Google verification path is testable offline
   googleTokenInfo: (process.env.GOOGLE_TOKENINFO || 'https://oauth2.googleapis.com/tokeninfo').replace(/\/+$/, ''),

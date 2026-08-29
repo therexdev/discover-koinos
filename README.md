@@ -109,8 +109,8 @@ node server.js
 | `MAX_CHATS_PER_DAY` | `400` | global daily visitor-chat budget (plus 6/min and 60/day per IP built in) |
 | **Social login** | | *(all optional; Local Wallet + Import always work)* |
 | `GOOGLE_CLIENT_ID` | *(inherited)* | **Aurvania's** Google OAuth client ID (`…apps.googleusercontent.com`). Enables the Google button, which opens the **same wallet as Aurvania & OURO**. Leave unset to inherit it from Aurvania at boot. Works with or without `LOGIN_SECRET` — see [Google custody](#google-bridged-or-held-here) |
-| `AURVANIA_API` | `https://aurvania.quest` | the shared account server Google sign-in bridges to |
-| `BRIDGE_UA` | `curl/8.5.0 (…)` | User-Agent the bridge presents (aurvania.quest 403s unfamiliar ones) |
+| `AURVANIA_API` | `https://aurvania.com` | the shared account server Google sign-in bridges to |
+| `BRIDGE_UA` | `curl/8.5.0 (…)` | User-Agent the bridge presents (aurvania.com 403s unfamiliar ones) |
 | `LOGIN_SECRET` | — | **required for X**, and switches Google to being held here rather than bridged — encrypts custodied wallets at rest. Without it the X button stays off and Google bridges every login |
 | `X_CLIENT_ID` / `X_CLIENT_SECRET` | — | X (Twitter) OAuth 2.0 app credentials — enable the X button |
 | `X_REDIRECT_URI` | `PUBLIC_ORIGIN/auth/x/callback` | must exactly match a callback URL registered in your X app |
