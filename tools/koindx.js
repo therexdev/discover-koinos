@@ -40,7 +40,11 @@ const PERIPHERY_ABI = JSON.parse(
 const DATA_DIR = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
   : path.join(__dirname, '..', 'data');
-const CACHE_FILE = path.join(DATA_DIR, 'koindx-pool.wasm');
+/* v2: the pre-candidates code cached a bytecode WITHOUT proving the
+   periphery accepts it, and one stale copy is known to be sitting in
+   DATA_DIR on the live host. New name = the old file is simply never
+   trusted; this file only ever holds a version that created a pool. */
+const CACHE_FILE = path.join(DATA_DIR, 'koindx-pool-v2.wasm');
 
 /* KoinDX periphery (mainnet) — the same address the launchpad contract
    calls for add_liquidity, from @koindx/v2-sdk. */
