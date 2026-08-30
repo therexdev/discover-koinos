@@ -9,7 +9,7 @@
    this gateway can keep an encrypted key:
 
      - Without LOGIN_SECRET it stays BRIDGED, custodying nothing: the ID
-       token goes to aurvania.quest/api/account and Aurvania answers with
+       token goes to aurvania.com/api/account and Aurvania answers with
        the wallet.
      - With LOGIN_SECRET this gateway is the account home. It verifies the
        ID token with Google itself and holds the key, and the first time it
@@ -47,7 +47,7 @@ function createAuth(cfg) {
     xClientSecret = '',
     xRedirectUri = '',
     // Google bridge → Aurvania / OURO shared account system.
-    aurvaniaApi = 'https://aurvania.quest',
+    aurvaniaApi = 'https://aurvania.com',
     bridgeUa = 'curl/8.5.0 (Discover-Koinos gateway)',
     /* Set once LOGIN_SECRET is present: this gateway then verifies Google ID
        tokens itself and custodies the keys, adopting the existing wallet from
@@ -66,7 +66,7 @@ function createAuth(cfg) {
      token Aurvania will accept (it checks `aud` against its own id). */
   let resolvedGoogleCid = String(googleClientId || '').trim();
 
-  /* aurvania.quest's host 403s unfamiliar User-Agents, so the bridge speaks
+  /* aurvania.com's host 403s unfamiliar User-Agents, so the bridge speaks
      with a curl-like identity (the pattern OURO already ships). */
   async function bridgeFetch(url, opts = {}) {
     const { timeoutMs = 12000, headers = {}, ...rest } = opts;
