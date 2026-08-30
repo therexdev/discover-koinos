@@ -3,6 +3,10 @@
 
 (() => {
   const { $, toast, escapeHtml } = UI;
+  /* The biometric wallet that runs the ETH→KOIN route (koinos-bio-wallet).
+     Server-overridable via /api/config so the domain can move without a
+     front-end deploy. */
+  const BIO_WALLET_URL = 'https://wallet.usekoinos.com/';
 
   /* Header + config must NOT gate button wiring — a slow /api/config would
      leave every control dead. Fire it, fill the config-dependent bits when
@@ -12,15 +16,20 @@
     const sym = cfg.nativeSymbol || 'tKOIN';
     $('#w-symbol').textContent = sym;
     $('#w-koin-label').textContent = sym + ' balance';
+    /* The gateway's own route, first on the list: send ETH or a stablecoin,
+       tap a fingerprint, get KOIN — no exchange account, no seed phrase.
+       Everything below it is a manual alternative. */
+    const bioWallet = `<li><a href="${escapeHtml(cfg.bioWalletUrl || BIO_WALLET_URL)}" target="_blank" rel="noopener">
+           <span>Buy KOIN with ETH <span class="pill">Biometric Secured</span></span><span class="where">↗</span></a>
+         <p class="hint" style="padding:0 18px 12px">Send ETH, USDC or USDT and one fingerprint scan swaps it to KOIN — the whole route runs for you, and only your passkey can spend the result.</p></li>`;
     const faucets = (cfg.faucets || []);
-    $('#w-faucets').innerHTML = faucets.length
+    $('#w-faucets').innerHTML = bioWallet + (faucets.length
       ? faucets.map(f => `<li><a href="${escapeHtml(f.url)}" target="_blank" rel="noopener"><span>${escapeHtml(f.name)}</span><span class="where">↗</span></a><p class="hint" style="padding:0 18px 12px">${escapeHtml(f.note)}</p></li>`).join('')
       /* Mainnet: the USDT/vKOIN pair on Uniswap — vKOIN is Vortex-bridged
          KOIN (1:1), and its Uniswap v4 pool is the deepest KOIN liquidity
-         on Ethereum. koinos.io's roundup stays as the backup. */
+         on Ethereum. */
       : `<li><a href="https://app.uniswap.org/swap?inputCurrency=0xdAC17F958D2ee523a2206206994597C13D831ec7&amp;outputCurrency=0xa50ad3a559A10f384a5bB2e27516f63E0B937b1A" target="_blank" rel="noopener"><span>Buy vKOIN on Uniswap</span><span class="where">USDT pair ↗</span></a>
-           <p class="hint" style="padding:0 18px 12px">vKOIN is KOIN bridged to Ethereum by the Vortex Koin Bridge — swap USDT → vKOIN, then bridge it 1:1 to native KOIN.</p></li>
-         <li><a href="https://koinos.io/get-koin" target="_blank" rel="noopener"><span>All ways to get KOIN</span><span class="where">↗</span></a></li>`;
+           <p class="hint" style="padding:0 18px 12px">vKOIN is KOIN bridged to Ethereum by the Vortex Koin Bridge — swap USDT → vKOIN, then bridge it 1:1 to native KOIN. The route above does all of this for you.</p></li>`);
   }).catch(() => {});
 
   async function paint() {
@@ -37,6 +46,7 @@
       const mana = Number(a.mana) || 0;
       $('#w-mana').textContent = mana.toFixed(2) + (a.demo ? ' (demo)' : '');
       $('#w-mana-fill').style.width = Math.min(100, mana * 20) + '%';
+      Holdings.render(a);
     } catch (e) {
       $('#w-mana').textContent = 'unavailable';
     }

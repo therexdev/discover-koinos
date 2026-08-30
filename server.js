@@ -99,6 +99,9 @@ const CFG = {
      payout/refund batches, locked-token delivery at unlock. */
   launchpadAddr: process.env.LAUNCHPAD_ADDRESS || '',
   tradeAppUrl: (process.env.TRADE_APP_URL || 'https://app.tradekoinos.com').replace(/\/+$/, ''),
+  /* The sibling biometric wallet (koinos-bio-wallet) that runs the ETH→KOIN
+     route end to end. */
+  bioWalletUrl: (process.env.BIO_WALLET_URL || 'https://wallet.usekoinos.com').replace(/\/+$/, '') + '/',
 
   /* Uploaded NFT images (the "Upload" path). Stored on the gateway, served
      by URL, referenced from on-chain metadata. */
@@ -129,9 +132,34 @@ const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const TOKEN_WASM = path.join(__dirname, 'contracts', 'prebuilt', 'token', 'contract.wasm');
 const COLLECTION_WASM = path.join(__dirname, 'contracts', 'prebuilt', 'collection', 'contract.wasm');
 
+const { createMailer } = require('./tools/mailer');
+const { createGifts } = require('./tools/gifts');
+const mailer = createMailer({
+  provider: process.env.EMAIL_PROVIDER,
+  apiKey: process.env.EMAIL_API_KEY,
+  webhookUrl: process.env.EMAIL_WEBHOOK_URL,
+  from: process.env.EMAIL_FROM,
+  fromName: process.env.EMAIL_FROM_NAME || 'Discover Koinos',
+});
+/* `gifts` needs auth to look up an email's wallet and auth needs gifts to
+   collect on sign-in, so the reference is late-bound through this holder
+   rather than by constructing one inside the other. */
+let auth = null;
+const gifts = createGifts({
+  dataDir: DATA_DIR,
+  chain,
+  origin: (CFG.publicOrigin || '').replace(/\/+$/, '') || 'https://usekoinos.com',
+  mailer,
+  lookupEmail: (email) => (auth ? auth.addressForEmail(email) : null),
+});
+
 const { createAuth } = require('./tools/auth');
 const xRedirectUri = CFG.xRedirectUri || (CFG.publicOrigin ? CFG.publicOrigin.replace(/\/+$/, '') + '/auth/x/callback' : '');
-const auth = createAuth({
+auth = createAuth({
+  /* Anything waiting for this email is handed over the moment Google
+     confirms who they are — which is also the moment a brand-new visitor
+     first HAS a wallet to receive it. */
+  onGoogleSignIn: (email, address) => gifts.collect(email, address),
   dataDir: DATA_DIR,
   loginSecret: CFG.loginSecret || require('node:crypto').randomBytes(32).toString('hex'),
   googleClientId: CFG.googleClientId,
@@ -432,11 +460,58 @@ function rememberPrepared(id, address, meta) {
    chain moved, so the gateway's own index must follow, or 'Your collection'
    goes stale and a second send of the same NFT sails through prepare only
    to fail cryptically on-chain. */
+/** Turn whatever the sender typed into the address this transfer must go
+    to. Accepts a Koinos address or an email; an email the gateway already
+    knows resolves to that person's own wallet, and one it does not resolves
+    to escrow with a claim recorded once the transfer confirms. */
+function resolveDestination(to, from) {
+  let dest;
+  try { dest = gifts.resolve(to); }
+  catch (e) { throw httpError(400, e.message); }
+  if (dest.address === from) {
+    throw httpError(400, dest.kind === 'address'
+      ? 'that would send it to yourself'
+      : 'that email already belongs to this wallet');
+  }
+  return dest;
+}
+
+/** What the sender is told after a gift send: where it went, and whether
+    the recipient has to come and collect it. */
+function giftReceipt(meta) {
+  const g = meta && meta.gift;
+  if (!g) return undefined;
+  return {
+    email: g.label,
+    held: g.mode === 'escrow',
+    emailed: mailer.enabled(),
+    emailWhy: mailer.enabled() ? undefined : mailer.status().why,
+  };
+}
+
+/** What applyConfirmed needs to finish a gift, or null for a plain send. */
+function giftMeta(dest, from, what) {
+  if (dest.kind === 'address') return null;
+  return { ...what, mode: dest.kind, email: dest.email, label: dest.label, from };
+}
+
 function applyConfirmed(meta) {
   if (!meta) return;
   if (meta.action === 'nft_transfer') {
     const rec = registry.nfts.find(n => n.tokenId === meta.tokenId && n.owner === meta.from);
     if (rec) { rec.owner = meta.to; saveNfts(); }
+  }
+  /* Both sides' held-token balances just changed; a cached sweep would show
+     the sender coins they no longer have. */
+  if (meta.action === 'token_transfer' || meta.action === 'token_mint' || meta.action === 'token_burn') {
+    dropHeld(meta.from); if (meta.to) dropHeld(meta.to);
+  }
+  /* Only now is the gift real: it is recorded (and emailed) against a
+     transfer the chain has actually accepted, never against an intention. */
+  if (meta.gift) {
+    const g = { ...meta.gift, txid: meta.txid };
+    const done = g.mode === 'escrow' ? gifts.recordEscrow(g) : gifts.notifyDirect(g);
+    Promise.resolve(done).catch(e => console.error('[gifts] ' + (e.message || e)));
   }
   if (meta.action === 'dex_listed') {
     const rec = registry.tokens.find(t => t.address === meta.token);
@@ -519,6 +594,9 @@ api.config = async () => {
     collection: CFG.collectionAddr || null,
     paintCollectionName: PAINT_NAME,
     faucets: net.faucets,
+    /* The biometric wallet that runs the ETH→KOIN route. Overridable so the
+       domain can move without a front-end deploy. */
+    bioWalletUrl: CFG.bioWalletUrl,
     auth: {
       google: auth.googleEnabled(),
       x: auth.xEnabled(),
@@ -590,6 +668,44 @@ function myCollections(address) {
     .map(c => ({ address: c.address, name: c.name, symbol: c.symbol, kind: c.kind, ouro: !!c.ouro, ouroUrl: c.ouro ? ouroCollectionUrl(c.address) : null }));
 }
 
+/* Held-token scan results, briefly cached: one wallet view asks for every
+   gateway token's balance, and a visitor refreshing the page should not
+   re-run that whole sweep. */
+const HELD_CACHE = new Map();   // address -> { at, held }
+const HELD_TTL = 20000;
+const HELD_SCAN_MAX = 60;       // newest N gateway tokens
+
+/** Tokens this address actually HOLDS.
+
+    "Owner" in the registry means who LAUNCHED a token, which is a different
+    question — a wallet can hold plenty it never launched, and can have sent
+    away everything it did. So this asks the chain for a balance on each
+    gateway token and keeps the ones that come back non-zero. */
+async function heldTokens(address) {
+  const hit = HELD_CACHE.get(address);
+  if (hit && Date.now() - hit.at < HELD_TTL) return hit.held;
+  const candidates = registry.tokens.filter(t => !t.demo).slice(-HELD_SCAN_MAX).reverse();
+  const held = [];
+  await Promise.all(candidates.map(async (t) => {
+    try {
+      const units = await chain.tokenBalanceAt(t.address, address);
+      if (units && Number(units) > 0) {
+        /* `balance` is what a person types and reads; `balanceUnits` is the
+           chain's own integer. Handing the UI raw units put 5000000000000 in
+           the amount box for a 50,000-token balance. */
+        held.push({
+          ...pubToken(t), balanceUnits: units,
+          balance: chain.fromUnits(units, t.decimals), mine: t.owner === address,
+        });
+      }
+    } catch (_) { /* one unreadable token must not empty the list */ }
+  }));
+  held.sort((a, b) => Number(b.balance) - Number(a.balance));
+  HELD_CACHE.set(address, { at: Date.now(), held });
+  return held;
+}
+const dropHeld = (address) => HELD_CACHE.delete(address);
+
 api.account = async (params) => {
   const address = params.get('address');
   if (!chain.isAddr(address)) throw httpError(400, 'a valid Koinos address is required');
@@ -599,20 +715,32 @@ api.account = async (params) => {
     collections: myCollections(address).filter(c => c.kind !== 'paint'),
   };
   if (DEMO) {
-    return { ok: true, demo: true, koin: 0, mana: 5, ...mine };
+    return {
+      ok: true, demo: true, koin: 0, mana: 5, ...mine,
+      held: mine.tokens.map(t => ({
+        ...t, balanceUnits: t.supplyUnits,
+        balance: chain.fromUnits(t.supplyUnits, t.decimals), mine: true,
+      })),
+      giftsSent: gifts.outbox(address),
+    };
   }
-  const [koin, mana] = await Promise.all([
+  const [koin, mana, held] = await Promise.all([
     chain.koinBalance(address).catch(() => 0),
     chain.mana(address).catch(() => 0),
+    heldTokens(address).catch(() => []),
   ]);
-  /* Balances of the visitor's launched tokens, best-effort. */
-  const tokens = [];
-  for (const t of mine.tokens.slice(0, 20)) {
-    let balance = t.supplyUnits;
-    try { balance = await chain.tokenBalanceAt(t.address, address); } catch (_) {}
-    tokens.push({ ...t, balance });
-  }
-  return { ok: true, koin, mana, nfts: mine.nfts, tokens, collections: mine.collections };
+  /* `tokens` stays "what this wallet launched" (the Tokens launched stat and
+     the Token Lab both read it); `held` is what it can actually send. */
+  const tokens = mine.tokens.map((t) => {
+    const h = held.find(x => x.address === t.address);
+    return { ...t, balance: h ? h.balanceUnits : '0' };
+  });
+  return {
+    ok: true, koin, mana, nfts: mine.nfts, tokens, held, collections: mine.collections,
+    /* Gifts this wallet sent to an email — so the sender can see what is
+       still waiting to be collected instead of wondering where it went. */
+    giftsSent: gifts.outbox(address),
+  };
 };
 
 /** GET /api/collections?address= — the collections this address can mint
@@ -1081,31 +1209,45 @@ api.prepare = async (body, ip) => {
   }
   const { action, params = {} } = body;
   const ops = [];
-  if (DEMO) {
-    const ref = rememberPrepared('demo', address);
-    return { ok: true, demo: true, ref, tx: { id: 'demo' } };
+  if (!DEMO) {
+    const sponsorMana = await chain.mana(chain.devAddress());
+    if (sponsorMana < CFG.minManaAction) throw httpError(503, 'the sponsor wallet is recharging its mana — try again in a few minutes');
   }
-  const sponsorMana = await chain.mana(chain.devAddress());
-  if (sponsorMana < CFG.minManaAction) throw httpError(503, 'the sponsor wallet is recharging its mana — try again in a few minutes');
 
+  /* Demo mode builds the SAME meta as live — it just skips the operations
+     themselves (there is no configured contract to build them against). That
+     keeps validation, recipient resolution and the gift bookkeeping on one
+     path, so what a demo server does is what a live one does minus the
+     transaction. (When the demo returned early, an emailed gift silently
+     did nothing at all.) */
   let meta = null;
   if (action === 'nft_transfer') {
-    const { tokenId, to } = params;
-    if (!chain.isAddr(to)) throw httpError(400, 'a valid destination address is required');
-    if (to === address) throw httpError(400, 'that NFT is already yours');
+    const { tokenId } = params;
+    /* `to` may be an address or an email — the server decides where an
+       email actually lands (a known wallet, or escrow), never the client. */
+    const dest = resolveDestination(params.to, address);
     const rec = registry.nfts.find(n => n.tokenId === tokenId);
     if (!rec) throw httpError(404, 'unknown playground NFT');
     if (rec.owner !== address) throw httpError(403, 'that NFT is not in your wallet');
-    ops.push(await chain.opNftTransfer(address, to, tokenId));
-    meta = { action, tokenId, from: address, to };
+    if (!DEMO) ops.push(await chain.opNftTransfer(address, dest.address, tokenId));
+    meta = {
+      action, tokenId, from: address, to: dest.address,
+      gift: giftMeta(dest, address, { kind: 'nft', tokenId, nftCode: rec.code, nftName: rec.name }),
+    };
   } else if (action === 'token_transfer') {
-    const { token, to, amount } = params;
+    const { token, amount } = params;
     const rec = registry.tokens.find(t => t.address === token);
     if (!rec) throw httpError(404, 'unknown gateway token');
-    if (!chain.isAddr(to)) throw httpError(400, 'a valid destination address is required');
-    if (to === address) throw httpError(400, 'that would send the tokens to yourself');
+    const dest = resolveDestination(params.to, address);
     const units = chain.toUnits(String(amount || '0'), rec.decimals);
-    ops.push(await chain.opTokenTransfer(token, address, to, units));
+    if (!DEMO) ops.push(await chain.opTokenTransfer(token, address, dest.address, units));
+    meta = {
+      action, token, from: address, to: dest.address, units,
+      gift: giftMeta(dest, address, {
+        kind: 'token', token, symbol: rec.symbol, amount: String(amount),
+        units, decimals: rec.decimals,
+      }),
+    };
   } else if (action === 'token_mint') {
     const { token, amount } = params;
     const rec = registry.tokens.find(t => t.address === token);
@@ -1113,17 +1255,21 @@ api.prepare = async (body, ip) => {
     if (rec.owner !== address) throw httpError(403, 'only the token owner can mint');
     if (!rec.mintable) throw httpError(400, 'this token was launched with a fixed supply');
     const units = chain.toUnits(String(amount || '0'), rec.decimals);
-    ops.push(await chain.opTokenMint(token, address, units));
+    if (!DEMO) ops.push(await chain.opTokenMint(token, address, units));
   } else if (action === 'token_burn') {
     const { token, amount } = params;
     const rec = registry.tokens.find(t => t.address === token);
     if (!rec) throw httpError(404, 'unknown gateway token');
     const units = chain.toUnits(String(amount || '0'), rec.decimals);
-    ops.push(await chain.opTokenBurn(token, address, units));
+    if (!DEMO) ops.push(await chain.opTokenBurn(token, address, units));
   } else {
     throw httpError(400, 'unknown action');
   }
 
+  if (DEMO) {
+    const ref = rememberPrepared('demo', address, meta);
+    return { ok: true, demo: true, ref, tx: { id: 'demo' } };
+  }
   const tx = await chain.prepareUserTx(address, ops);
   const ref = rememberPrepared(tx.id, address, meta);
   return { ok: true, ref, tx };
@@ -1135,10 +1281,14 @@ api.submit = async (body, ip) => {
   if (!known || known.expires < Date.now()) throw httpError(400, 'this prepared transaction expired — start again');
   PREPARED.delete(String(ref));
   if (rateLimited('submit:ip:' + ip, 40, 3600000)) throw httpError(429, 'too many transactions — slow down a moment');
-  if (DEMO) { applyConfirmed(known.meta); return { ok: true, demo: true, txid: demoTxid() }; }
+  if (DEMO) {
+    const demoId = demoTxid();
+    applyConfirmed(known.meta && { ...known.meta, txid: demoId });
+    return { ok: true, demo: true, txid: demoId, gift: giftReceipt(known.meta) };
+  }
   const txid = await chain.submitCosigned(transaction, known.id, known.address);
-  applyConfirmed(known.meta);
-  return { ok: true, txid, explorer: explorerTx(txid) };
+  applyConfirmed(known.meta && { ...known.meta, txid });
+  return { ok: true, txid, explorer: explorerTx(txid), gift: giftReceipt(known.meta) };
 };
 
 api.health = async () => ({ ok: true, demo: DEMO, network: CFG.network });

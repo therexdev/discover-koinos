@@ -104,6 +104,59 @@
       You can import this account into Kondor with the key above — same account, more tools.</p>
     </div>
   </div>
+
+  <section class="section-head" id="holdings-head" hidden>
+    <h2>What's in your wallet</h2>
+    <p>Everything this account holds from the gateway. Send any of it to a Koinos address —
+       or to an email address, and we'll hold it until they come and collect.</p>
+  </section>
+
+  <div class="cards" id="holdings" hidden>
+    <div class="card" style="grid-column: 1 / -1">
+      <div class="card-head">
+        <div class="card-icon">🪙</div>
+        <div><h3>Tokens</h3><p class="sub" id="h-tok-sub">—</p></div>
+      </div>
+      <div id="h-tokens" class="holding-list"></div>
+    </div>
+
+    <div class="card" style="grid-column: 1 / -1">
+      <div class="card-head">
+        <div class="card-icon">🖼️</div>
+        <div><h3>NFTs</h3><p class="sub" id="h-nft-sub">—</p></div>
+      </div>
+      <div id="h-nfts" class="nft-grid"></div>
+    </div>
+
+    <div class="card" style="grid-column: 1 / -1" id="h-sent-card" hidden>
+      <div class="card-head">
+        <div class="card-icon">📤</div>
+        <div><h3>Sent to an email</h3><p class="sub">Waiting to be collected</p></div>
+      </div>
+      <div id="h-sent" class="holding-list"></div>
+    </div>
+  </div>
+
+  <!-- one send form, moved to whichever holding is being sent -->
+  <template id="send-form-tpl">
+    <form class="send-form" autocomplete="off">
+      <label class="field">Send to
+        <input type="text" class="send-to" placeholder="Koinos address, or an email address" autocomplete="off">
+      </label>
+      <label class="field send-amount-field">Amount
+        <input type="text" class="send-amount" placeholder="0.0" inputmode="decimal" autocomplete="off">
+      </label>
+      <div class="send-row">
+        <button type="submit" class="btn small send-go">Send</button>
+        <button type="button" class="btn small ghost send-cancel">Cancel</button>
+        <button type="button" class="btn small ghost send-max">Max</button>
+      </div>
+      <p class="hint send-note">An email address works even if they've never used Koinos —
+         they'll get a link to collect it, and signing in with that Google account makes
+         their wallet for them.</p>
+      <div class="send-status"></div>
+    </form>
+  </template>
 </main>
 
 <footer class="site-footer">
@@ -138,6 +191,7 @@
 <script src="/js/wallet.js"></script>
 <script src="/js/passkey.js"></script>
 <script src="/js/ui.js"></script>
+<script src="/js/wallet-holdings.js"></script>
 <script src="/js/wallet-page.js"></script>
 </body>
 </html>

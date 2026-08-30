@@ -120,6 +120,13 @@ node server.js
 | `AUTO_LIST_OURO` | `1` | set `0` to stop auto-registering collections on OURO |
 | `DEX_ORDERBOOK_ADDR` | mainnet orderbook | Trade Koinos orderbook contract (mainnet only) |
 | `TRADE_APP_URL` | `https://app.tradekoinos.com` | the Trade Koinos web app — pair links point at `#/market/<token>_<KOIN>` there |
+| `BIO_WALLET_URL` | `https://wallet.usekoinos.com` | the biometric wallet the **Buy KOIN with ETH** button opens |
+| **Sending to an email** | | *(optional; sending to an address always works)* |
+| `EMAIL_PROVIDER` | — | `resend` or `sendgrid`. Unset (and no webhook) means gifts still send and are still claimable — the recipient just isn't emailed, and the sender is told so |
+| `EMAIL_API_KEY` | — | the provider's API key |
+| `EMAIL_FROM` | — | the From address, on a domain verified with that provider |
+| `EMAIL_FROM_NAME` | `Discover Koinos` | display name on the From line |
+| `EMAIL_WEBHOOK_URL` | — | instead of a provider: the message is POSTed as JSON to this URL and whatever is there sends it |
 
 ### The mana budget, honestly
 
@@ -291,6 +298,32 @@ The gateway is built to convert each "aha" into an announcement:
 
 Set `PUBLIC_ORIGIN` in production so share links and OG images carry your
 domain.
+
+## Send a token or an NFT to an email address
+
+The wallet page lists what an account actually holds — tokens with a balance,
+NFTs it owns — and puts a **Send** next to each. The destination box takes a
+Koinos address *or* an email address.
+
+An email is resolved by the server, never the browser:
+
+| the gateway… | what happens |
+|---|---|
+| already knows a wallet for that email | the transfer goes **straight to it**. They get an email saying it arrived; there is nothing to claim |
+| does not | it goes to a gateway-held **escrow** account and a claim is recorded. Signing in with that Google account releases everything waiting for it — which is also the moment a first-time visitor first *has* a wallet |
+
+Matching is on the email address Google itself asserts on a verified ID token.
+What the sender typed only decides which pending claim a verified address may
+collect, so a typo cannot hand someone else's gift away.
+
+**Custody, plainly:** an unclaimed gift is held by this server, in one escrow
+account whose key lives in `DATA_DIR/gift-escrow.json` (mode 600). That is real
+custody, and it is why claims expire after 30 days rather than sitting here
+forever. A gift to an address the gateway already knows never touches escrow.
+
+Gmail spellings are normalized before matching — `A.B+tag@gmail.com` and
+`ab@gmail.com` are one inbox, and dots are left alone on every other domain,
+where they are not noise. `node tests/gifts.test.js` pins the whole lifecycle.
 
 ## Security model
 

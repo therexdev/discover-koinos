@@ -32,6 +32,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { Signer } = require('koilib');
 
+const { normalizeEmail } = require('./gifts');
+
 function base64url(buf) {
   return Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
@@ -267,6 +269,7 @@ function createAuth(cfg) {
     const rec = store.byGoogle[id.sub];
     if (rec && rec.wifEnc) {
       if (rec.email !== id.email) { rec.email = id.email; save(); }
+      await afterSignIn(id.email, rec.addr);
       return { wif: release(rec, 'google'), address: rec.addr, created: false, label: id.email };
     }
 
@@ -302,6 +305,7 @@ function createAuth(cfg) {
     save();
     console.log(`[auth] adopted the Google wallet ${remote.address} from ${aurvaniaApi}`);
 
+    await afterSignIn(id.email, remote.address);
     return { wif: remote.wif, address: remote.address, created: !!remote.created, label: id.email };
   }
 
@@ -461,6 +465,7 @@ function createAuth(cfg) {
       };
       save();
     }
+    await afterSignIn(id.email, rec.addr);
     return { token: makeSessionToken(id.sub, rec.addr), address: rec.addr, label: id.email, expiresInMs: sessionTtlMs };
   }
 
@@ -485,10 +490,32 @@ function createAuth(cfg) {
     return { address: rec.addr, id: transaction.id, signatures };
   }
 
+  /** The wallet this gateway already knows for an email address, or null.
+
+      Gmail's dots and +tags mean one inbox has many spellings, so both sides
+      are normalized before comparing — otherwise a gift addressed to one
+      spelling would never find the account that reads it. */
+  function addressForEmail(email) {
+    const want = normalizeEmail(email);
+    if (!want) return null;
+    for (const rec of Object.values(store.byGoogle)) {
+      if (rec && rec.addr && normalizeEmail(rec.email) === want) return rec.addr;
+    }
+    return null;
+  }
+
+  /** Called after any successful Google sign-in with the VERIFIED email off
+      Google's own token. Whatever it does must never break the sign-in. */
+  async function afterSignIn(email, address) {
+    if (typeof cfg.onGoogleSignIn !== 'function') return;
+    try { await cfg.onGoogleSignIn(email, address); }
+    catch (e) { console.error('[auth] post-sign-in hook failed: ' + (e.message || e)); }
+  }
+
   return {
     warmup, googleEnabled, xEnabled, google, xLoginUrl, xCallback, xClaimWif,
     googleSession, signWithToken, verifySessionToken,
-    signerEnabled,
+    signerEnabled, addressForEmail,
     googleClientId: () => resolvedGoogleCid,
     googleCustody: () => !!googleLocalCustody,
     aurvania: () => aurvaniaApi,
