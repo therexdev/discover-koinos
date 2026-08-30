@@ -11,13 +11,14 @@
     "keygen": "node tools/keygen.js",
     "deploy-playground": "node scripts/deploy-playground.js",
     "build-contracts": "cd contracts && npm ci && npm run build",
-    "test": "node tests/gifts.test.js"
+    "test": "node tests/gifts.test.js && node tests/smtp.test.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "koilib": "^9.2.0"
+    "koilib": "^9.2.0",
+    "nodemailer": "^9.0.6"
   },
   "license": "MIT"
 }

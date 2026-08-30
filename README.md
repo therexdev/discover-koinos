@@ -122,11 +122,28 @@ node server.js
 | `TRADE_APP_URL` | `https://app.tradekoinos.com` | the Trade Koinos web app — pair links point at `#/market/<token>_<KOIN>` there |
 | `BIO_WALLET_URL` | `https://wallet.usekoinos.com` | the biometric wallet the **Buy KOIN with ETH** button opens |
 | **Sending to an email** | | *(optional; sending to an address always works)* |
-| `EMAIL_PROVIDER` | — | `resend` or `sendgrid`. Unset (and no webhook) means gifts still send and are still claimable — the recipient just isn't emailed, and the sender is told so |
-| `EMAIL_API_KEY` | — | the provider's API key |
-| `EMAIL_FROM` | — | the From address, on a domain verified with that provider |
+| `EMAIL_PROVIDER` | — | `smtp`, `resend` or `sendgrid`. Unset (and no webhook) means gifts still send and are still claimable — the recipient just isn't emailed, and the sender is told so |
+| `SMTP_USER` | — | **`smtp` only** — the full mailbox address, e.g. `hello@usekoinos.com`. Also becomes `EMAIL_FROM` unless you set that separately |
+| `SMTP_PASS` | — | **`smtp` only** — the mailbox password |
+| `SMTP_HOST` | `smtp.titan.email` | Hostinger Titan by default; set it for any other mailbox |
+| `SMTP_PORT` | `465` | `465` uses implicit TLS, anything else (e.g. `587`) uses STARTTLS — inferred, so there is nothing else to set |
+| `SMTP_SECURE` | *(from port)* | override that inference: `1` forces TLS, `0` forces STARTTLS |
+| `EMAIL_API_KEY` | — | **`resend`/`sendgrid` only** — the provider's API key |
+| `EMAIL_FROM` | *(SMTP user)* | the From address, on a domain the provider will send for |
 | `EMAIL_FROM_NAME` | `Discover Koinos` | display name on the From line |
 | `EMAIL_WEBHOOK_URL` | — | instead of a provider: the message is POSTed as JSON to this URL and whatever is there sends it |
+
+For **Hostinger Titan**, the whole configuration is three values — host and port
+already default to Titan's:
+
+```
+EMAIL_PROVIDER=smtp
+SMTP_USER=hello@usekoinos.com
+SMTP_PASS=<the mailbox password>
+```
+
+The server logs in at boot and prints whether mail is on, so a wrong password
+shows up in the log rather than as a notification nobody received.
 
 ### The mana budget, honestly
 

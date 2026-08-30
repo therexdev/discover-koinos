@@ -140,6 +140,14 @@ const mailer = createMailer({
   webhookUrl: process.env.EMAIL_WEBHOOK_URL,
   from: process.env.EMAIL_FROM,
   fromName: process.env.EMAIL_FROM_NAME || 'Discover Koinos',
+  /* SMTP — a real mailbox. Host and port default to Hostinger Titan, so a
+     Titan setup only needs SMTP_USER and SMTP_PASS. */
+  smtpHost: process.env.SMTP_HOST,
+  smtpPort: process.env.SMTP_PORT,
+  smtpUser: process.env.SMTP_USER,
+  smtpPass: process.env.SMTP_PASS,
+  smtpSecure: process.env.SMTP_SECURE == null || process.env.SMTP_SECURE === ''
+    ? null : process.env.SMTP_SECURE === '1',
 });
 /* `gifts` needs auth to look up an email's wallet and auth needs gifts to
    collect on sign-in, so the reference is late-bound through this holder
@@ -1964,6 +1972,13 @@ const server = http.createServer(async (req, res) => {
   if (auth.xEnabled()) console.log('auth:     X (Twitter) sign-in ENABLED');
   else if (CFG.xClientId && !CFG.loginSecret) console.log('auth:     X client id set but LOGIN_SECRET is unset — X sign-in stays OFF');
   console.log('auth:     Local Wallet + Import always available');
+  /* Prove the mailbox at boot rather than on the first gift — a wrong SMTP
+     password should show up in the log, not as a notification nobody got. */
+  mailer.verify().then((m) => {
+    console.log(m.enabled
+      ? `email:    gift notifications ENABLED via ${m.via}`
+      : `email:    gift notifications OFF — ${m.why}. Gifts still send and stay claimable; recipients just are not emailed`);
+  }).catch(() => {});
   if (auth.signerEnabled()) {
     console.log(`signer:   /api/session + /api/sign ENABLED — apps sign via this server, the key never leaves it (${CFG.signerSessionTtlMins}-min sessions)`);
     console.log(CFG.signerOrigins.length
