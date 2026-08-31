@@ -145,20 +145,24 @@ async function test(name, fn) {
     });
     await new Promise(r => stub.listen(0, '127.0.0.1', r));
     try {
-      kaiChat.configure({ url: `http://127.0.0.1:${stub.address().port}`, key: 'k', model: 'koinos-network:koinos-balanced' });
+      kaiChat.configure({ url: `http://127.0.0.1:${stub.address().port}`, key: 'k', model: 'koinos-network:koinos-smart' });
       const m = kaiChat.buildMessages('hi', []);
-      await kaiChat.requestChat(m, 'koinos-smart');            // a listed choice pins its class
+      await kaiChat.requestChat(m, 'smart');                   // a listed tier pins its class
+      await kaiChat.requestChat(m, 'koinos-fast');             // a cached page sends the bare class name
       await kaiChat.requestChat(m);                            // no choice → default
+      await kaiChat.requestChat(m, 'koinos-balanced');         // the RETIRED class id → default, not an error
       await kaiChat.requestChat(m, 'deepseek-r1-32b');         // pricier class NOT on the list → default
       await kaiChat.requestChat(m, { evil: true });            // junk type → default
       assert.deepStrictEqual(seen, [
+        'koinos-network:qwen25-14b',
+        'koinos-network:koinos-fast',
         'koinos-network:koinos-smart',
-        'koinos-network:koinos-balanced',
-        'koinos-network:koinos-balanced',
-        'koinos-network:koinos-balanced',
+        'koinos-network:koinos-smart',
+        'koinos-network:koinos-smart',
+        'koinos-network:koinos-smart',
       ]);
       // the page's dropdown and the server's list must agree
-      assert.deepStrictEqual(kaiChat.MODEL_CHOICES.map(c => c.id), ['koinos-fast', 'koinos-balanced', 'koinos-smart']);
+      assert.deepStrictEqual(kaiChat.MODEL_CHOICES.map(c => c.id), ['fast', 'balanced', 'smart']);
     } finally {
       stub.close();
     }
@@ -173,8 +177,32 @@ async function test(name, fn) {
     const opts = [...sel[0].matchAll(/<option value="([^"]+)"( selected)?/g)];
     assert.deepStrictEqual(opts.map(o => o[1]), kaiChat.MODEL_CHOICES.map(c => c.id),
       'dropdown options diverge from MODEL_CHOICES');
-    assert.deepStrictEqual(opts.filter(o => o[2]).map(o => o[1]), ['koinos-balanced'],
+    assert.deepStrictEqual(opts.filter(o => o[2]).map(o => o[1]), ['balanced'],
       'balanced must be the one preselected option');
+  });
+
+  /* The drift this catches: the showcase shipped pointing at koinos-balanced,
+     a 3B, and stayed there while the network grew to 12 servable classes up
+     to 32B. Nothing failed — a stale class is a VALID class, so every test
+     and every probe stayed green while nearly every visitor got the second
+     weakest model on the menu. So assert the intent instead of the value:
+     the default tier must not be the network's entry-level class, and the top
+     tier must be strictly bigger than the default. Update MODEL_CHOICES and
+     this passes; forget it for six months and it does not. */
+  await test('the default tier is not the entry-level class, and Smart outranks it', () => {
+    const SIZE_B = { 'koinos-fast': 1.5, 'koinos-balanced': 3, 'gemma3-4b': 4, 'koinos-smart': 7,
+      'mistral-7b': 7, 'qwen-coder-7b': 7, 'llama31-8b': 8, 'gemma3-12b': 12, 'qwen25-14b': 14,
+      'phi-4': 14, 'mistral-small-24b': 24, 'gemma3-27b': 27, 'qwen25-32b': 32 };
+    const by = Object.fromEntries(kaiChat.MODEL_CHOICES.map(c => [c.id, c]));
+    for (const c of kaiChat.MODEL_CHOICES) {
+      assert.ok(SIZE_B[c.cls], `${c.id} points at an unknown class "${c.cls}" — is it on /scheduler/network/status?`);
+      assert.ok(/\d/.test(c.hint), `${c.id}'s hint must name the model, not just describe it: "${c.hint}"`);
+    }
+    assert.ok(SIZE_B[by.balanced.cls] >= 7,
+      `the default tier runs ${by.balanced.cls} — too small for the model people judge the network by`);
+    assert.ok(SIZE_B[by.smart.cls] > SIZE_B[by.balanced.cls],
+      'Smart must be strictly bigger than Balanced, or the tier is a lie');
+    assert.ok(SIZE_B[by.fast.cls] < SIZE_B[by.balanced.cls], 'Fast must be smaller than Balanced');
   });
 
   await test('static chat bubbles in ai.html are single-line (pre-wrap renders source newlines)', () => {

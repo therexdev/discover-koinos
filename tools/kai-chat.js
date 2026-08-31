@@ -19,19 +19,39 @@
 /* The classes a visitor may pick. A closed list, mapped server-side to the
    app's "koinos-network:<class>" form — the browser sends only an id from
    this list, so nobody can point the owner's paid account at a pricier
-   class than these. Balanced is the default: the network's common model,
-   served by more machines than the big ones. */
+   class than these.
+
+   The TIER (what the visitor picks) is deliberately separate from the CLASS
+   (what runs). The network's menu grows as people bring machines online, and
+   a tier hard-wired to a class means the showcase silently stays on whatever
+   was available the day it was written — which is exactly what happened:
+   Balanced pointed at koinos-balanced, a 3B, while 12 classes up to 32B were
+   being served, and it was the answer nearly every visitor got.
+
+   Every class here is checked against the live /scheduler/network/status
+   menu before it ships; picking one nobody serves turns the widget into an
+   error message. Named models, not just adjectives, because the whole point
+   of this chat is that a real model is running on a stranger's computer —
+   "Balanced" proves nothing, "Qwen 2.5 7B" does. */
 const MODEL_CHOICES = [
-  { id: 'koinos-fast', label: '⚡ Fast', hint: 'quickest, simplest answers' },
-  { id: 'koinos-balanced', label: '⚖️ Balanced', hint: 'good answers at a good pace' },
-  { id: 'koinos-smart', label: '🧠 Smart', hint: 'deepest answers, slower' },
+  { id: 'fast', cls: 'koinos-fast', label: '⚡ Fast', hint: 'Qwen 2.5 1.5B — quickest, simplest answers' },
+  { id: 'balanced', cls: 'koinos-smart', label: '⚖️ Balanced', hint: 'Qwen 2.5 7B — good answers at a good pace' },
+  { id: 'smart', cls: 'qwen25-14b', label: '🧠 Smart', hint: 'Qwen 2.5 14B — deepest answers, slower' },
 ];
-const MODEL_MAP = Object.fromEntries(MODEL_CHOICES.map(c => [c.id, 'koinos-network:' + c.id]));
+/* Tier id or bare class name both resolve — a page cached before tiers and
+   classes were split sends the class name as the id, and every class name it
+   could send is on this same closed list. An id that is neither (including
+   the retired "koinos-balanced") falls back to K.model, so a stale tab lands
+   on the current default instead of breaking. */
+const MODEL_MAP = Object.fromEntries(MODEL_CHOICES.flatMap(c => [
+  [c.id, 'koinos-network:' + c.cls],
+  [c.cls, 'koinos-network:' + c.cls],
+]));
 
 const K = {
   url: '',
   key: '',
-  model: 'koinos-network:koinos-balanced', // fallback when the request names no (valid) choice
+  model: 'koinos-network:koinos-smart', // fallback when the request names no (valid) choice
   /* Visitors ask short questions; these bounds exist so one visitor (or a
      script) can't stuff the paid prompt. max_tokens bounds the answer the
      same way. */
