@@ -37,6 +37,15 @@ async function test(name, fn) {
     assert.ok(m.slice(1).every(t => t.role !== 'system'));
   });
 
+  await test('the accuracy guardrail is in the prompt the model actually gets', () => {
+    // A live answer on the site called Ethereum a layer-2. That correction
+    // rides on every request, so deleting it should break something.
+    const m = kaiChat.buildMessages('how does koinos compare to ethereum?', []);
+    assert.strictEqual(m[0].role, 'system');
+    assert.match(m[0].content, /Ethereum is a layer-1/);
+    assert.match(m[0].content, /Solidity is a language, not a virtual machine/);
+  });
+
   await test('buildMessages bounds history count, length and roles', () => {
     const history = [];
     for (let i = 0; i < 20; i++) history.push({ role: i % 2 ? 'assistant' : 'user', content: 'turn ' + i });
@@ -136,20 +145,24 @@ async function test(name, fn) {
     });
     await new Promise(r => stub.listen(0, '127.0.0.1', r));
     try {
-      kaiChat.configure({ url: `http://127.0.0.1:${stub.address().port}`, key: 'k', model: 'koinos-network:koinos-balanced' });
+      kaiChat.configure({ url: `http://127.0.0.1:${stub.address().port}`, key: 'k', model: 'koinos-network:koinos-smart' });
       const m = kaiChat.buildMessages('hi', []);
-      await kaiChat.requestChat(m, 'koinos-smart');            // a listed choice pins its class
+      await kaiChat.requestChat(m, 'smart');                   // a listed tier pins its class
+      await kaiChat.requestChat(m, 'koinos-fast');             // a cached page sends the bare class name
       await kaiChat.requestChat(m);                            // no choice → default
+      await kaiChat.requestChat(m, 'koinos-balanced');         // the RETIRED class id → default, not an error
       await kaiChat.requestChat(m, 'deepseek-r1-32b');         // pricier class NOT on the list → default
       await kaiChat.requestChat(m, { evil: true });            // junk type → default
       assert.deepStrictEqual(seen, [
+        'koinos-network:qwen25-14b',
+        'koinos-network:koinos-fast',
         'koinos-network:koinos-smart',
-        'koinos-network:koinos-balanced',
-        'koinos-network:koinos-balanced',
-        'koinos-network:koinos-balanced',
+        'koinos-network:koinos-smart',
+        'koinos-network:koinos-smart',
+        'koinos-network:koinos-smart',
       ]);
       // the page's dropdown and the server's list must agree
-      assert.deepStrictEqual(kaiChat.MODEL_CHOICES.map(c => c.id), ['koinos-fast', 'koinos-balanced', 'koinos-smart']);
+      assert.deepStrictEqual(kaiChat.MODEL_CHOICES.map(c => c.id), ['fast', 'balanced', 'smart']);
     } finally {
       stub.close();
     }
@@ -164,8 +177,32 @@ async function test(name, fn) {
     const opts = [...sel[0].matchAll(/<option value="([^"]+)"( selected)?/g)];
     assert.deepStrictEqual(opts.map(o => o[1]), kaiChat.MODEL_CHOICES.map(c => c.id),
       'dropdown options diverge from MODEL_CHOICES');
-    assert.deepStrictEqual(opts.filter(o => o[2]).map(o => o[1]), ['koinos-balanced'],
+    assert.deepStrictEqual(opts.filter(o => o[2]).map(o => o[1]), ['balanced'],
       'balanced must be the one preselected option');
+  });
+
+  /* The drift this catches: the showcase shipped pointing at koinos-balanced,
+     a 3B, and stayed there while the network grew to 12 servable classes up
+     to 32B. Nothing failed — a stale class is a VALID class, so every test
+     and every probe stayed green while nearly every visitor got the second
+     weakest model on the menu. So assert the intent instead of the value:
+     the default tier must not be the network's entry-level class, and the top
+     tier must be strictly bigger than the default. Update MODEL_CHOICES and
+     this passes; forget it for six months and it does not. */
+  await test('the default tier is not the entry-level class, and Smart outranks it', () => {
+    const SIZE_B = { 'koinos-fast': 1.5, 'koinos-balanced': 3, 'gemma3-4b': 4, 'koinos-smart': 7,
+      'mistral-7b': 7, 'qwen-coder-7b': 7, 'llama31-8b': 8, 'gemma3-12b': 12, 'qwen25-14b': 14,
+      'phi-4': 14, 'mistral-small-24b': 24, 'gemma3-27b': 27, 'qwen25-32b': 32 };
+    const by = Object.fromEntries(kaiChat.MODEL_CHOICES.map(c => [c.id, c]));
+    for (const c of kaiChat.MODEL_CHOICES) {
+      assert.ok(SIZE_B[c.cls], `${c.id} points at an unknown class "${c.cls}" — is it on /scheduler/network/status?`);
+      assert.ok(/\d/.test(c.hint), `${c.id}'s hint must name the model, not just describe it: "${c.hint}"`);
+    }
+    assert.ok(SIZE_B[by.balanced.cls] >= 7,
+      `the default tier runs ${by.balanced.cls} — too small for the model people judge the network by`);
+    assert.ok(SIZE_B[by.smart.cls] > SIZE_B[by.balanced.cls],
+      'Smart must be strictly bigger than Balanced, or the tier is a lie');
+    assert.ok(SIZE_B[by.fast.cls] < SIZE_B[by.balanced.cls], 'Fast must be smaller than Balanced');
   });
 
   await test('static chat bubbles in ai.html are single-line (pre-wrap renders source newlines)', () => {
@@ -178,6 +215,95 @@ async function test(name, fn) {
       assert.ok(!/\n/.test(text),
         'a static .chat-text spans multiple source lines — white-space:pre-wrap will render the line breaks and indentation literally');
     }
+  });
+
+  await test('markdown renders as formatting, and never as markup', () => {
+    const md = require('../public/js/md.js');
+
+    // The answer the owner was actually shown, unformatted, on the live site.
+    const real = [
+      'Koinos is often compared to Ethereum, but it has some key differences. Here are a few:',
+      '',
+      "1. **Layer-1 vs Layer-2**: Koinos is a layer-1 blockchain.",
+      '2. **Gas and Fees**: Koinos is feeless.',
+      '',
+      'These differences make Koinos an attractive option.',
+    ].join('\n');
+    const html = md.render(real);
+    assert.ok(!html.includes('**'), 'asterisks survived into the output: ' + html);
+    assert.match(html, /<ol><li><strong>Layer-1 vs Layer-2<\/strong>/, 'numbered list with bold labels');
+    assert.strictEqual((html.match(/<li>/g) || []).length, 2, 'two list items');
+    assert.match(html, /^<p>Koinos is often compared/);
+
+    // Blocks.
+    assert.match(md.render('- one\n- two'), /<ul><li>one<\/li><li>two<\/li><\/ul>/);
+    assert.match(md.render('## Heading'), /<h4>Heading<\/h4>/); // h1 in a bubble is shouting
+    assert.match(md.render('> quoted'), /<blockquote>quoted<\/blockquote>/);
+    assert.match(md.render('```\nx = 1\n```'), /<pre><code>x = 1<\/code><\/pre>/);
+    assert.match(md.render('a\nb'), /<p>a<br>b<\/p>/, 'a single newline is a line break, not a new paragraph');
+
+    // Inline.
+    assert.match(md.render('*soft*'), /<em>soft<\/em>/);
+    assert.match(md.render('use `npm ci` here'), /<code>npm ci<\/code>/);
+    assert.match(md.render('see https://koinosai.com now'),
+      /<a href="https:\/\/koinosai\.com" target="_blank" rel="noopener noreferrer">/);
+    assert.match(md.render('[docs](https://docs.koinosai.com)'), /<a href="https:\/\/docs\.koinosai\.com"/);
+
+    // Code spans are literal: a model writing markdown ABOUT markdown must
+    // not have it applied. This is also why code is split out rather than
+    // stashed behind a placeholder the model could itself emit.
+    assert.match(md.render('`**not bold**`'), /<code>\*\*not bold\*\*<\/code>/);
+  });
+
+  await test('a hostile answer cannot become markup', () => {
+    const md = require('../public/js/md.js');
+    // Answers are generated on someone else's machine. Every one of these
+    // must come back as visible text, not as behaviour.
+    const attacks = [
+      '<script>alert(1)</script>',
+      '<img src=x onerror=alert(1)>',
+      '<iframe src="https://evil.example"></iframe>',
+      '[click](javascript:alert(1))',
+      '[click](JaVaScRiPt:alert(1))',
+      '<a href="https://evil.example">x</a>',
+      '</p><script>x</script><p>',
+      '<div onclick="steal()">hi</div>',
+    ];
+    /* The real invariant is not "these words do not appear" — escaped text
+       legitimately contains the word onerror, and displaying it is correct.
+       It is that every TAG in the output is one this renderer chose to emit,
+       and every href goes somewhere http(s). */
+    const ALLOWED = new Set(['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li',
+                             'blockquote', 'a', 'h3', 'h4', 'h5', 'h6']);
+    for (const a of attacks) {
+      const html = md.render(a);
+      const tags = [...html.matchAll(/<\/?([a-zA-Z][a-zA-Z0-9]*)/g)].map((m) => m[1].toLowerCase());
+      for (const t of tags) {
+        assert.ok(ALLOWED.has(t), `${a} produced a <${t}> we never emit: ${html}`);
+      }
+      for (const [, href] of html.matchAll(/href="([^"]*)"/g)) {
+        assert.match(href, /^https?:\/\//, `${a} produced a non-http href: ${href}`);
+      }
+      // And the dangerous text is still SHOWN, escaped — not silently dropped.
+      if (a.startsWith('<')) assert.ok(html.includes('&lt;'), `${a} should render as visible text`);
+    }
+    // A legitimate link still works, so the guard is not just "block links".
+    assert.match(md.render('[ok](https://koinosai.com)'), /<a href="https:\/\/koinosai\.com"/);
+  });
+
+  await test('the page loads the renderer and uses it for answers', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'ai.html'), 'utf8');
+    const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'ai-page.js'), 'utf8');
+    assert.ok(html.indexOf('/js/md.js') < html.indexOf('/js/ai-page.js'),
+      'md.js must load before the page script that calls it');
+    assert.match(page, /KaiMd\.render\(/, 'the answer is rendered, not dumped as text');
+    assert.match(page, /out\.textContent = text/, 'and falls back to plain text if md.js is missing');
+
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'site.css'), 'utf8');
+    assert.match(css, /\.chat-text\.chat-md \{[^}]*white-space:\s*normal/,
+      'rendered markdown must drop pre-wrap or every paragraph doubles its spacing');
   });
 
   let failed = 0;

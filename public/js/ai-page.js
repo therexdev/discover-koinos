@@ -65,6 +65,21 @@
 
     let answer = '';
     let served = '';
+
+    /* Models answer in markdown whether or not you ask them to, and dumping
+       that into textContent showed people literal ** around their headings.
+       Render it — escaping first, because the words came off a stranger's
+       machine (see js/md.js). Re-rendered on every chunk so formatting
+       appears as it streams; a half-finished **bold run simply shows as the
+       characters it is until its closing marker arrives. */
+    const paint = (text) => {
+      if (window.KaiMd) {
+        out.classList.add('chat-md');
+        out.innerHTML = KaiMd.render(text);
+      } else {
+        out.textContent = text; // md.js missing: plain text beats nothing
+      }
+    };
     try {
       const res = await fetch('/api/ai-chat', {
         method: 'POST',
@@ -101,7 +116,7 @@
             const delta = f.choices?.[0]?.delta?.content ?? f.delta;
             if (delta) {
               answer += delta;
-              out.textContent = answer;
+              paint(answer);
               log.scrollTop = log.scrollHeight;
             }
             if (f.error) throw new Error(String(f.error.message || f.error));

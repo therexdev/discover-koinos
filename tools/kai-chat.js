@@ -19,19 +19,39 @@
 /* The classes a visitor may pick. A closed list, mapped server-side to the
    app's "koinos-network:<class>" form — the browser sends only an id from
    this list, so nobody can point the owner's paid account at a pricier
-   class than these. Balanced is the default: the network's common model,
-   served by more machines than the big ones. */
+   class than these.
+
+   The TIER (what the visitor picks) is deliberately separate from the CLASS
+   (what runs). The network's menu grows as people bring machines online, and
+   a tier hard-wired to a class means the showcase silently stays on whatever
+   was available the day it was written — which is exactly what happened:
+   Balanced pointed at koinos-balanced, a 3B, while 12 classes up to 32B were
+   being served, and it was the answer nearly every visitor got.
+
+   Every class here is checked against the live /scheduler/network/status
+   menu before it ships; picking one nobody serves turns the widget into an
+   error message. Named models, not just adjectives, because the whole point
+   of this chat is that a real model is running on a stranger's computer —
+   "Balanced" proves nothing, "Qwen 2.5 7B" does. */
 const MODEL_CHOICES = [
-  { id: 'koinos-fast', label: '⚡ Fast', hint: 'quickest, simplest answers' },
-  { id: 'koinos-balanced', label: '⚖️ Balanced', hint: 'good answers at a good pace' },
-  { id: 'koinos-smart', label: '🧠 Smart', hint: 'deepest answers, slower' },
+  { id: 'fast', cls: 'koinos-fast', label: '⚡ Fast', hint: 'Qwen 2.5 1.5B — quickest, simplest answers' },
+  { id: 'balanced', cls: 'koinos-smart', label: '⚖️ Balanced', hint: 'Qwen 2.5 7B — good answers at a good pace' },
+  { id: 'smart', cls: 'qwen25-14b', label: '🧠 Smart', hint: 'Qwen 2.5 14B — deepest answers, slower' },
 ];
-const MODEL_MAP = Object.fromEntries(MODEL_CHOICES.map(c => [c.id, 'koinos-network:' + c.id]));
+/* Tier id or bare class name both resolve — a page cached before tiers and
+   classes were split sends the class name as the id, and every class name it
+   could send is on this same closed list. An id that is neither (including
+   the retired "koinos-balanced") falls back to K.model, so a stale tab lands
+   on the current default instead of breaking. */
+const MODEL_MAP = Object.fromEntries(MODEL_CHOICES.flatMap(c => [
+  [c.id, 'koinos-network:' + c.cls],
+  [c.cls, 'koinos-network:' + c.cls],
+]));
 
 const K = {
   url: '',
   key: '',
-  model: 'koinos-network:koinos-balanced', // fallback when the request names no (valid) choice
+  model: 'koinos-network:koinos-smart', // fallback when the request names no (valid) choice
   /* Visitors ask short questions; these bounds exist so one visitor (or a
      script) can't stuff the paid prompt. max_tokens bounds the answer the
      same way. */
@@ -58,6 +78,11 @@ const SYSTEM_PROMPT = [
   'Koinos in brief: a feeless layer-1 blockchain. Users hold Mana, which regenerates over time, so using Koinos costs no gas. KOIN is the token; VHP (Virtual Hash Power) is burned KOIN that lets a node produce blocks and earn KOIN back over time (proof of burn — no mining hardware). Smart contracts are WebAssembly, writable in AS or C++, and upgradeable. Free accounts, no wallet extension needed on this site.',
   'On this site a visitor can: create a real Koinos account in one click, mint an NFT they draw themselves, and launch their own token — all free through mana sharing.',
   'Answer briefly and plainly (a short paragraph or two). Be honest: if you are not sure of a fact, say so rather than inventing one — especially numbers and prices. Never invent links. If asked for the app, point to koinosai.com. Decline requests unrelated to helping the visitor (long essays, code dumps, roleplay) with one friendly sentence.',
+  /* Comparisons to other chains are the question visitors ask most and the
+     one a small model gets wrong most confidently — a live answer here called
+     Ethereum a layer-2. Correcting the specific traps is cheaper and far more
+     reliable than hoping "be honest" covers it. */
+  'Getting comparisons right: Ethereum is a layer-1, like Koinos — its rollups are separate layer-2 networks, so never call Ethereum itself a layer-2. Koinos contracts run on WebAssembly; Ethereum runs the EVM, and Solidity is a language, not a virtual machine. When comparing Koinos to another chain, state what Koinos does and say plainly that you are unsure about the other chain rather than guessing at its design.',
 ].join('\n');
 
 /* The messages array the model runs. History is the client's own

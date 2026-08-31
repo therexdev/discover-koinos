@@ -53,9 +53,9 @@
              placeholder="Why doesn't Koinos charge gas fees?" aria-label="Your question" required>
       <select id="chat-model" aria-label="Which network model answers"
               title="Pick the model that answers — Fast is snappiest, Smart thinks hardest">
-        <option value="koinos-fast">⚡ Fast</option>
-        <option value="koinos-balanced" selected>⚖️ Balanced</option>
-        <option value="koinos-smart">🧠 Smart</option>
+        <option value="fast">⚡ Fast — Qwen 2.5 1.5B</option>
+        <option value="balanced" selected>⚖️ Balanced — Qwen 2.5 7B</option>
+        <option value="smart">🧠 Smart — Qwen 2.5 14B</option>
       </select>
       <button class="btn" id="chat-send" type="submit">Ask</button>
     </form>
@@ -82,6 +82,7 @@
 <script src="/js/wallet.js"></script>
 <script src="/js/passkey.js"></script>
 <script src="/js/ui.js"></script>
+<script src="/js/md.js"></script>
 <script src="/js/ai-page.js"></script>
 </body>
 </html>
