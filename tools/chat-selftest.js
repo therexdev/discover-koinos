@@ -37,6 +37,15 @@ async function test(name, fn) {
     assert.ok(m.slice(1).every(t => t.role !== 'system'));
   });
 
+  await test('the accuracy guardrail is in the prompt the model actually gets', () => {
+    // A live answer on the site called Ethereum a layer-2. That correction
+    // rides on every request, so deleting it should break something.
+    const m = kaiChat.buildMessages('how does koinos compare to ethereum?', []);
+    assert.strictEqual(m[0].role, 'system');
+    assert.match(m[0].content, /Ethereum is a layer-1/);
+    assert.match(m[0].content, /Solidity is a language, not a virtual machine/);
+  });
+
   await test('buildMessages bounds history count, length and roles', () => {
     const history = [];
     for (let i = 0; i < 20; i++) history.push({ role: i % 2 ? 'assistant' : 'user', content: 'turn ' + i });
@@ -178,6 +187,95 @@ async function test(name, fn) {
       assert.ok(!/\n/.test(text),
         'a static .chat-text spans multiple source lines — white-space:pre-wrap will render the line breaks and indentation literally');
     }
+  });
+
+  await test('markdown renders as formatting, and never as markup', () => {
+    const md = require('../public/js/md.js');
+
+    // The answer the owner was actually shown, unformatted, on the live site.
+    const real = [
+      'Koinos is often compared to Ethereum, but it has some key differences. Here are a few:',
+      '',
+      "1. **Layer-1 vs Layer-2**: Koinos is a layer-1 blockchain.",
+      '2. **Gas and Fees**: Koinos is feeless.',
+      '',
+      'These differences make Koinos an attractive option.',
+    ].join('\n');
+    const html = md.render(real);
+    assert.ok(!html.includes('**'), 'asterisks survived into the output: ' + html);
+    assert.match(html, /<ol><li><strong>Layer-1 vs Layer-2<\/strong>/, 'numbered list with bold labels');
+    assert.strictEqual((html.match(/<li>/g) || []).length, 2, 'two list items');
+    assert.match(html, /^<p>Koinos is often compared/);
+
+    // Blocks.
+    assert.match(md.render('- one\n- two'), /<ul><li>one<\/li><li>two<\/li><\/ul>/);
+    assert.match(md.render('## Heading'), /<h4>Heading<\/h4>/); // h1 in a bubble is shouting
+    assert.match(md.render('> quoted'), /<blockquote>quoted<\/blockquote>/);
+    assert.match(md.render('```\nx = 1\n```'), /<pre><code>x = 1<\/code><\/pre>/);
+    assert.match(md.render('a\nb'), /<p>a<br>b<\/p>/, 'a single newline is a line break, not a new paragraph');
+
+    // Inline.
+    assert.match(md.render('*soft*'), /<em>soft<\/em>/);
+    assert.match(md.render('use `npm ci` here'), /<code>npm ci<\/code>/);
+    assert.match(md.render('see https://koinosai.com now'),
+      /<a href="https:\/\/koinosai\.com" target="_blank" rel="noopener noreferrer">/);
+    assert.match(md.render('[docs](https://docs.koinosai.com)'), /<a href="https:\/\/docs\.koinosai\.com"/);
+
+    // Code spans are literal: a model writing markdown ABOUT markdown must
+    // not have it applied. This is also why code is split out rather than
+    // stashed behind a placeholder the model could itself emit.
+    assert.match(md.render('`**not bold**`'), /<code>\*\*not bold\*\*<\/code>/);
+  });
+
+  await test('a hostile answer cannot become markup', () => {
+    const md = require('../public/js/md.js');
+    // Answers are generated on someone else's machine. Every one of these
+    // must come back as visible text, not as behaviour.
+    const attacks = [
+      '<script>alert(1)</script>',
+      '<img src=x onerror=alert(1)>',
+      '<iframe src="https://evil.example"></iframe>',
+      '[click](javascript:alert(1))',
+      '[click](JaVaScRiPt:alert(1))',
+      '<a href="https://evil.example">x</a>',
+      '</p><script>x</script><p>',
+      '<div onclick="steal()">hi</div>',
+    ];
+    /* The real invariant is not "these words do not appear" — escaped text
+       legitimately contains the word onerror, and displaying it is correct.
+       It is that every TAG in the output is one this renderer chose to emit,
+       and every href goes somewhere http(s). */
+    const ALLOWED = new Set(['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li',
+                             'blockquote', 'a', 'h3', 'h4', 'h5', 'h6']);
+    for (const a of attacks) {
+      const html = md.render(a);
+      const tags = [...html.matchAll(/<\/?([a-zA-Z][a-zA-Z0-9]*)/g)].map((m) => m[1].toLowerCase());
+      for (const t of tags) {
+        assert.ok(ALLOWED.has(t), `${a} produced a <${t}> we never emit: ${html}`);
+      }
+      for (const [, href] of html.matchAll(/href="([^"]*)"/g)) {
+        assert.match(href, /^https?:\/\//, `${a} produced a non-http href: ${href}`);
+      }
+      // And the dangerous text is still SHOWN, escaped — not silently dropped.
+      if (a.startsWith('<')) assert.ok(html.includes('&lt;'), `${a} should render as visible text`);
+    }
+    // A legitimate link still works, so the guard is not just "block links".
+    assert.match(md.render('[ok](https://koinosai.com)'), /<a href="https:\/\/koinosai\.com"/);
+  });
+
+  await test('the page loads the renderer and uses it for answers', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'ai.html'), 'utf8');
+    const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'ai-page.js'), 'utf8');
+    assert.ok(html.indexOf('/js/md.js') < html.indexOf('/js/ai-page.js'),
+      'md.js must load before the page script that calls it');
+    assert.match(page, /KaiMd\.render\(/, 'the answer is rendered, not dumped as text');
+    assert.match(page, /out\.textContent = text/, 'and falls back to plain text if md.js is missing');
+
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'site.css'), 'utf8');
+    assert.match(css, /\.chat-text\.chat-md \{[^}]*white-space:\s*normal/,
+      'rendered markdown must drop pre-wrap or every paragraph doubles its spacing');
   });
 
   let failed = 0;

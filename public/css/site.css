@@ -688,6 +688,38 @@ dialog.modal h3 { margin-top: 0; }
 .chat-msg.bot .chat-who { color: var(--accent-soft); }
 .chat-text { display: inline-block; text-align: left; background: var(--bg-inset); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 14px; white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
 .chat-msg.you .chat-text { background: rgba(93, 0, 179, .22); border-color: var(--line-strong); }
+
+/* A rendered answer is real block markup, so it must NOT keep the pre-wrap
+   that plain streamed text needs — otherwise every newline the markdown
+   already turned into a paragraph gets a blank line of its own on top. Tight
+   margins throughout: this is a chat bubble, not an article. */
+.chat-text.chat-md { white-space: normal; }
+.chat-md > :first-child { margin-top: 0; }
+.chat-md > :last-child { margin-bottom: 0; }
+.chat-md p { margin: 0 0 .7em; }
+.chat-md ul, .chat-md ol { margin: 0 0 .7em; padding-left: 1.35em; }
+.chat-md li { margin: .25em 0; }
+.chat-md li > br:first-child { display: none; }
+.chat-md h3, .chat-md h4, .chat-md h5, .chat-md h6 {
+  margin: .9em 0 .35em; font-size: 1em; font-weight: 650; color: var(--text);
+}
+.chat-md strong { font-weight: 650; color: var(--text); }
+.chat-md em { font-style: italic; }
+.chat-md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .9em; background: rgba(255, 255, 255, .07);
+  border-radius: 4px; padding: .1em .35em;
+}
+.chat-md pre {
+  margin: 0 0 .7em; padding: 10px 12px; overflow-x: auto;
+  background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: var(--radius-sm);
+}
+.chat-md pre code { background: none; padding: 0; font-size: .88em; }
+.chat-md blockquote {
+  margin: 0 0 .7em; padding-left: .8em;
+  border-left: 2px solid var(--line-strong); color: var(--text-dim);
+}
+.chat-md a { color: var(--accent-soft); text-decoration: underline; }
 .chat-thinking { color: var(--text-dim); font-style: italic; }
 .chat-err { margin-top: 6px; font-size: .85rem; color: var(--bad); }
 .chat-meta { margin-top: 5px; font-size: .74rem; color: var(--text-dim); }
