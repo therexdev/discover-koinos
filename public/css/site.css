@@ -523,6 +523,8 @@ pre.code .s { color: #86efac; }
 }
 /* beat `.site-footer img { height: 22px }` above */
 .site-footer .eco-tile img { height: auto; max-height: 100%; max-width: 100%; object-fit: contain; opacity: 1; display: block; }
+.eco-tile-kai { flex-direction: column; gap: 4px; color: var(--text); font-size: .85rem; font-weight: 600; white-space: nowrap; }
+.site-footer .eco-tile-kai img { width: 32px; height: 32px; flex-shrink: 0; }
 .eco-tile:hover { transform: translateY(-2px); border-color: var(--accent); background: rgba(255, 255, 255, .09); }
 @media (max-width: 480px) { .eco-tile { width: 44%; max-width: 160px; } }
 
