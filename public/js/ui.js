@@ -294,7 +294,7 @@ const UI = (() => {
         const pk = $('#auth-passkey', d), alt = $('#auth-passkey-alt', d);
         if (pk) {
           pk.hidden = !ok;
-          $('#auth-passkey-label', d).textContent = Passkey.remembered() ? 'Unlock with Passkey' : 'Create with Passkey';
+          $('#auth-passkey-label', d).textContent = Passkey.remembered() ? 'Unlock with KOIN Vault' : 'Create with Passkey';
         }
         if (alt) alt.hidden = !ok || Passkey.remembered();
       }).catch(() => {});
