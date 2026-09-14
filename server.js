@@ -1538,7 +1538,7 @@ function buildCsp() {
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" + g,
     "font-src https://fonts.gstatic.com",
     "img-src 'self' data:",
-    "connect-src 'self'" + g,
+    "connect-src 'self' https://koinvault.app" + g,
     "frame-src" + (g || " 'none'"),
     "frame-ancestors 'none'",
     "base-uri 'none'",

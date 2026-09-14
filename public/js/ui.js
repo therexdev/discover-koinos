@@ -208,6 +208,8 @@ const UI = (() => {
     d.innerHTML = `
       <h3>Get your Koinos account</h3>
       <p class="sub">One account, your choice of door. Everything on this site is free either way.</p>
+      <button class="auth-opt primary" id="auth-vault">👆 Unlock with KOIN Vault</button>
+      <div id="auth-vault-pair" hidden></div>
       <div class="auth-opts">
         <div id="auth-google" class="auth-opt g-wrap" style="position:relative" hidden>
           <span class="ic" aria-hidden="true"><svg class="g-mark" width="18" height="18" viewBox="0 0 48 48">
@@ -239,6 +241,7 @@ const UI = (() => {
     document.body.appendChild(d);
     _modal = d;
 
+    KoinVault.wire(d);
     $('#auth-close', d).addEventListener('click', () => d.close());
     $('#auth-local', d).addEventListener('click', () => {
       try { ensureAccount(); d.close(); } catch (_) {}
@@ -294,7 +297,7 @@ const UI = (() => {
         const pk = $('#auth-passkey', d), alt = $('#auth-passkey-alt', d);
         if (pk) {
           pk.hidden = !ok;
-          $('#auth-passkey-label', d).textContent = Passkey.remembered() ? 'Unlock with KOIN Vault' : 'Create with Passkey';
+          $('#auth-passkey-label', d).textContent = Passkey.remembered() ? 'Unlock original Passkey wallet' : 'Create with Passkey';
         }
         if (alt) alt.hidden = !ok || Passkey.remembered();
       }).catch(() => {});
@@ -412,7 +415,7 @@ const UI = (() => {
     $('#acct-logout', m).addEventListener('click', () => {
       m.remove(); _menu = null;
       const backed = sessionStorage.getItem('dk_backed_up') === '1';
-      if (!backed && !confirm('Log out?\n\nIf this is a Local Wallet you have not backed up, its key will be gone for good. Social accounts (Google/X) and Passkey wallets can be recovered by signing in again.')) return;
+      if (!KoinVault.address() && !backed && !confirm('Log out?\n\nIf this is a Local Wallet you have not backed up, its key will be gone for good. Social accounts (Google/X) and Passkey wallets can be recovered by signing in again.')) return;
       Wallet.logout();
       toast('Logged out', 'ok');
     });

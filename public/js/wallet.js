@@ -50,6 +50,7 @@ const Wallet = (() => {
 
   /** Create a brand-new Koinos account (or return the existing one). */
   function createAccount() {
+    if (KoinVault.address()) return KoinVault.address();
     if (loadKey()) return account;
     const bytes = new Uint8Array(32);
     crypto.getRandomValues(bytes);
@@ -63,6 +64,7 @@ const Wallet = (() => {
   /** Import an account from a WIF backup. Replaces the current key. */
   function importAccount(wif) {
     const s = Signer.fromWif(String(wif).trim());
+    KoinVault.disconnect();
     storeSet(String(wif).trim());
     signer = s;
     account = s.getAddress();
@@ -95,6 +97,7 @@ const Wallet = (() => {
       was never backed up, it is gone — callers should warn first. Social
       accounts can always be recovered by signing in again. */
   function logout() {
+    KoinVault.disconnect();
     signer = null; account = null; memKey = null;
     try { localStorage.removeItem(LS_KEY); } catch (_) {}
     try { localStorage.removeItem('dk_progress'); } catch (_) {}
@@ -102,15 +105,16 @@ const Wallet = (() => {
   }
 
   /** The WIF backup of this account — show it, never send it anywhere. */
-  const exportWif = () => (loadKey() ? storeGet() : null);
+  const exportWif = () => (KoinVault.address() ? null : (loadKey() ? storeGet() : null));
 
-  const address = () => (loadKey() ? account : null);
-  const exists = () => loadKey();
+  const address = () => KoinVault.address() || (loadKey() ? account : null);
+  const exists = () => !!KoinVault.address() || loadKey();
 
   /** Sign the standard request proof: the server only performs free
       actions for an address that demonstrably controls its key. Silent —
       no popups, the key is right here. */
   async function proof(action) {
+    if (KoinVault.address()) throw new Error("This free action is not yet supported with KOIN Vault. Use a local, Google, or original passkey wallet for this action.");
     if (!loadKey()) createAccount();
     const ts = Date.now();
     const sig = await signer.signMessage(`discover-koinos:${action}:${ts}`);
@@ -120,6 +124,7 @@ const Wallet = (() => {
   /** Sign a server-prepared transaction (adds our signature, returns it).
       The server then co-signs as mana payer and broadcasts. */
   async function signTx(tx) {
+    if (KoinVault.address()) throw new Error("This free action is not yet supported with KOIN Vault. Use a local, Google, or original passkey wallet for this action.");
     if (!loadKey()) throw new Error('No account on this device yet');
     return signer.signTransaction(tx);
   }

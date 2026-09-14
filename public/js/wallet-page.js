@@ -34,7 +34,12 @@
 
   async function paint() {
     const addr = Wallet.address();
-    if (!addr) return;
+    if (!addr) {
+      $('#w-addr').textContent = '—';
+      $('#w-create').textContent = 'Sign in';
+      $('#w-create').disabled = false;
+      return;
+    }
     $('#w-addr').textContent = addr;
     $('#w-create').textContent = 'Account active';
     $('#w-create').disabled = true;
@@ -80,7 +85,7 @@
   /* backup */
   $('#w-reveal').addEventListener('click', () => {
     const wif = Wallet.exportWif();
-    if (!wif) return toast('Create an account first', 'err');
+    if (!wif) return toast(KoinVault.address() ? 'Manage your recovery kit in KOIN Vault.' : 'Create an account first', 'err');
     const box = $('#w-wif');
     const showing = box.classList.toggle('revealed'); if (showing) markBackedUp();
     box.textContent = showing ? wif : '····································';
@@ -88,12 +93,12 @@
   });
   $('#w-copy-wif').addEventListener('click', () => {
     const wif = Wallet.exportWif();
-    if (!wif) return toast('Create an account first', 'err');
+    if (!wif) return toast(KoinVault.address() ? 'Manage your recovery kit in KOIN Vault.' : 'Create an account first', 'err');
     markBackedUp(); copy(wif, 'Private key copied — paste it somewhere SAFE');
   });
   $('#w-download').addEventListener('click', () => {
     const wif = Wallet.exportWif();
-    if (!wif) return toast('Create an account first', 'err');
+    if (!wif) return toast(KoinVault.address() ? 'Manage your recovery kit in KOIN Vault.' : 'Create an account first', 'err');
     const blob = new Blob([
       `Discover Koinos — account backup\n` +
       `address: ${Wallet.address()}\n` +
