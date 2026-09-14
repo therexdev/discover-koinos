@@ -235,7 +235,6 @@ const UI = (() => {
         </div>
         <p class="hint" id="auth-passkey-alt" hidden style="margin:0">Made a passkey wallet before, on another device? <a href="#" id="auth-passkey-unlock">Unlock it here</a> — your synced passkeys will be offered.</p>
       </div>
-      <p class="hint" id="auth-custodial-note"><strong>Google</strong> opens the <strong>same wallet</strong> you have in Aurvania and on OURO — one address across every Koinos site. Google and X hand the key to this browser when you sign in, and you can export it any time on the Wallet page. A Local Wallet never leaves your device. A <strong>Passkey</strong> wallet is sealed by your device itself — your face, fingerprint or PIN re-creates the key, on every device your passkeys sync to, and no server ever sees it.</p>
       <div style="text-align:right;margin-top:14px"><button class="btn ghost small" id="auth-close">Close</button></div>`;
     document.body.appendChild(d);
     _modal = d;
