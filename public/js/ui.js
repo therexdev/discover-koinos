@@ -88,6 +88,28 @@ const UI = (() => {
 
   /* ---- header ---- */
   let _cfg = null;
+  function paintNetwork(cfg) {
+    const badge = $('#net-badge');
+    if (!badge) return;
+    const connecting = !cfg.demo && cfg.ready === false;
+    badge.classList.toggle('demo', !!cfg.demo || connecting);
+    badge.textContent = cfg.demo ? 'demo mode' : connecting ? 'reconnecting'
+      : cfg.testnet ? cfg.networkLabel.replace('Koinos ', '') : 'mainnet';
+    badge.title = cfg.note || '';
+  }
+
+  // A tab opened during recovery must stop displaying the old boot state.
+  function waitForChain() {
+    setTimeout(async () => {
+      try {
+        const cfg = await Api.config(true);
+        _cfg = cfg;
+        paintNetwork(cfg);
+        if (!cfg.demo && cfg.ready === false) waitForChain();
+      } catch (_) { waitForChain(); }
+    }, 5000);
+  }
+
   async function initHeader() {
     const chip = $('#addr-chip');
     const paint = () => {
@@ -109,16 +131,14 @@ const UI = (() => {
     try {
       const cfg = await Api.config();
       _cfg = cfg;
-      const badge = $('#net-badge');
-      if (badge) {
-        if (cfg.demo) { badge.textContent = 'demo mode'; badge.classList.add('demo'); }
-        else badge.textContent = cfg.testnet ? cfg.networkLabel.replace('Koinos ', '') : 'mainnet';
-      }
+      paintNetwork(cfg);
+      if (!cfg.demo && cfg.ready === false) waitForChain();
       if (cfg.auth && cfg.auth.google) { _googleConfigured = true; loadGoogle(cfg.auth.googleClientId); }
       return cfg;
     } catch (e) {
       const badge = $('#net-badge');
       if (badge) { badge.textContent = 'offline'; badge.classList.add('demo'); }
+      waitForChain();
       return null;
     }
   }

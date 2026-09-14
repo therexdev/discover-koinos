@@ -61,10 +61,17 @@ npm install
 npm start           # http://localhost:3000 — DEMO mode until configured
 ```
 
-With no `GATEWAY_DEV_WIF` (or no reachable RPC) the server boots in **demo
+With no `GATEWAY_DEV_WIF` (or with `DEMO_MODE=1`) the server boots in **demo
 mode**: the full UI works, actions simulate instantly and are labeled demo.
 That's deliberate — you can deploy and style the site before funding the chain
 side.
+
+A configured live server never switches to demo mode after an RPC failure.
+It retries startup every 30 seconds, returns HTTP 503 for chain actions while
+connecting, and resumes live operation automatically. `/api/health` and
+`/api/config` expose `ready` and `chainStatus`; the header updates when the
+connection recovers. Read requests time out and try the configured backup
+endpoints. Transaction broadcasts are not automatically replayed.
 
 ## Go live on Harbinger (testnet)
 

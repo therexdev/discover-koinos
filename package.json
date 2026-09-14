@@ -11,7 +11,7 @@
     "keygen": "node tools/keygen.js",
     "deploy-playground": "node scripts/deploy-playground.js",
     "build-contracts": "cd contracts && npm ci && npm run build",
-    "test": "node tests/gifts.test.js && node tests/smtp.test.js"
+    "test": "node tests/gifts.test.js && node tests/smtp.test.js && node --test tests/chain-startup.test.js tests/chain-server.test.js tests/rpc.test.js"
   },
   "engines": {
     "node": ">=18"

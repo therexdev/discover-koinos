@@ -15,10 +15,11 @@
      · prepares user transactions (transfers) the browser signs and
        the server co-signs — the co-sign path proves every byte
 
-   With no GATEWAY_DEV_WIF (or no reachable RPC) it boots in DEMO
+   With no GATEWAY_DEV_WIF (or DEMO_MODE=1) it boots in DEMO
    mode: every action simulates instantly and is labeled as such,
    so the site can be developed, styled and deployed before the
-   chain side is funded.
+   chain side is funded. A configured live server retries connection
+   failures without ever simulating transactions.
    ============================================================ */
 'use strict';
 const http = require('node:http');
@@ -30,6 +31,7 @@ const kaiChat = require('./tools/kai-chat');
 const { pickRpcs, NETWORKS } = require('./tools/rpc');
 const { nftCardPng } = require('./tools/png');
 const { createLaunchpadKeeper } = require('./tools/launchpad-keeper');
+const { createChainStartup } = require('./tools/chain-startup');
 
 /* ---------------- configuration ---------------- */
 
@@ -194,8 +196,15 @@ auth = createAuth({
   xRedirectUri: CFG.loginSecret ? xRedirectUri : '',
 });
 
-let DEMO = CFG.demo;          // may flip on at boot if the chain is unreachable
-let BOOT_NOTE = '';
+const DEMO = CFG.demo || !CFG.devWif;
+const chainStartup = createChainStartup({
+  demo: DEMO, connect: connectChain, onReady: startChainServices,
+  onError: (e) => console.log(`chain:    ${e.message}`),
+});
+function chainNote() {
+  if (DEMO) return CFG.demo ? 'DEMO_MODE=1' : 'no sponsor wallet configured';
+  return chainStartup.ready() ? undefined : 'Connecting to Koinos — retrying automatically';
+}
 const PAINT_NAME = 'Discover Koinos Paint';   // the one shared Paint collection
 
 /* ---------------- tiny persistence ----------------
@@ -597,8 +606,10 @@ api.config = async () => {
     nativeSymbol: net.nativeSymbol,
     explorer: net.explorer,
     demo: DEMO,
-    note: BOOT_NOTE || undefined,
-    sponsor: DEMO ? null : chain.devAddress(),
+    ready: chainStartup.ready(),
+    chainStatus: chainStartup.status(),
+    note: chainNote(),
+    sponsor: chainStartup.ready() ? chain.devAddress() : null,
     collection: CFG.collectionAddr || null,
     paintCollectionName: PAINT_NAME,
     faucets: net.faucets,
@@ -804,7 +815,7 @@ api.signerConfig = async () => ({
      (auto-settled by this server's keeper) and whether this server can mint
      fresh tokens for a session (sponsor wallet configured + not in demo). */
   launchpad: CFG.launchpadAddr || null,
-  tokenLaunch: !DEMO && chain.enabled() && auth.signerEnabled(),
+  tokenLaunch: chainStartup.ready() && chain.enabled() && auth.signerEnabled(),
 });
 
 /* Attach a logo to a token for the launchpad (any live token, not just ones
@@ -1299,7 +1310,10 @@ api.submit = async (body, ip) => {
   return { ok: true, txid, explorer: explorerTx(txid), gift: giftReceipt(known.meta) };
 };
 
-api.health = async () => ({ ok: true, demo: DEMO, network: CFG.network });
+api.health = async () => ({
+  ok: true, demo: DEMO, network: CFG.network,
+  ready: chainStartup.ready(), chainStatus: chainStartup.status(), note: chainNote(),
+});
 
 function explorerTx(txid) {
   const net = NETWORKS[CFG.network];
@@ -1773,6 +1787,12 @@ function applySignerCors(req, res, pathname) {
   res.setHeader('Access-Control-Max-Age', '600');
 }
 
+const CHAIN_ROUTES = new Set([
+  '/api/stats', '/api/account', '/api/mint-nft', '/api/upload-nft',
+  '/api/launch-token', '/api/list-dex', '/api/prepare', '/api/submit',
+  '/api/launchpad-profile',
+]);
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
@@ -1837,6 +1857,11 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname.startsWith('/api/')) {
       res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Cache-Control', 'no-store');
+      if (!DEMO && !chainStartup.ready() && CHAIN_ROUTES.has(pathname)) {
+        res.setHeader('Retry-After', '30');
+        throw httpError(503, 'Koinos is reconnecting — please try again shortly');
+      }
       let out;
       if (req.method === 'GET' && GET_ROUTES[pathname]) {
         out = await GET_ROUTES[pathname](url.searchParams);
@@ -1882,82 +1907,79 @@ const server = http.createServer(async (req, res) => {
 
 /* ---------------- boot ---------------- */
 
+async function connectChain() {
+  const rpcUrls = await pickRpcs(CFG.network);
+  chain.configure({
+    network: CFG.network, rpcs: rpcUrls,
+    devWif: CFG.devWif,
+    collectionAddr: CFG.collectionAddr, collectionWif: CFG.collectionWif,
+    dexOrderbook: CFG.dexOrderbook,
+    launchpadAddr: CFG.launchpadAddr,
+  });
+  const [sponsorMana, sponsorKoin] = await Promise.all([
+    chain.mana(chain.devAddress()), chain.koinBalance(chain.devAddress()),
+  ]);
+  console.log(`sponsor:  ${chain.devAddress()} (${sponsorKoin} ${NETWORKS[CFG.network].nativeSymbol}, ${Math.floor(sponsorMana)} mana)`);
+  console.log('mode:     LIVE — Koinos connected');
+}
+
+/* Run once after connection succeeds, even if boot needed retries. Keep
+   optional collection/keeper work outside the connection readiness check. */
+async function startChainServices() {
+  if (CFG.collectionAddr) {
+    try {
+      const info = await chain.collectionInfo();
+      if (/^Uninitialized/.test(info.name || '')) {
+        /* Deployed but never initialized — this is what OURO (and every
+           chain reader) shows as an unnamed collection. We HOLD the
+           collection key, so finish the setup ourselves, in the
+           background — serving never waits on it. */
+        console.log(`paint:    ${CFG.collectionAddr} deployed but NOT initialized — finishing its setup now…`);
+        (async () => {
+          await chain.initializeCollectionAt(CFG.collectionAddr, chain.keyFromWif(CFG.collectionWif), {
+            name: PAINT_NAME, symbol: 'PAINT', uri: '',
+            description: 'Pixel art minted first-hand by Koinos newcomers at the Discover Koinos gateway.',
+            owner: chain.devAddress(), royaltyBps: 0,
+          });
+          const fixed = await chain.collectionInfo();
+          console.log(`paint:    setup finished — "${fixed.name}" (${fixed.symbol}); OURO shows it within ~5 minutes`);
+          registerPaintCollection(fixed);
+        })().catch((e) => {
+          console.log(`paint:    self-initialize failed — ${e.message}`);
+          console.log(`paint:    fallback: KOINOS_NETWORK=${CFG.network} node scripts/deploy-playground.js gateway.env`);
+        });
+      } else {
+        console.log(`paint:    ${CFG.collectionAddr} "${info.name || '?'}" (${info.symbol || '?'})`);
+        registerPaintCollection(info);
+      }
+    } catch (e) {
+      console.log(`paint:    WARNING — collection at ${CFG.collectionAddr} did not answer get_info: ${e.message}`);
+    }
+  } else {
+    console.log('paint:    no Paint collection configured — run scripts/deploy-playground.js');
+  }
+  console.log(`dex:      ${chain.dexEnabled() ? 'Trade Koinos ' + CFG.dexOrderbook : 'off (mainnet only)'}`);
+  if (chain.launchpadEnabled()) {
+    launchpadKeeper = createLaunchpadKeeper({
+      chain, manaFloor: CFG.minManaAction,
+      log: (m) => console.log(m),
+    });
+    launchpadKeeper.start();
+  } else {
+    console.log('keeper:   launchpad OFF — set LAUNCHPAD_ADDRESS to auto-settle Trade Koinos launches');
+  }
+  if (!fs.existsSync(TOKEN_WASM)) console.log('tokens:   WARNING — contracts/prebuilt/token/contract.wasm missing; token launches will fail');
+  if (!fs.existsSync(COLLECTION_WASM)) console.log('upload:   WARNING — contracts/prebuilt/collection/contract.wasm missing; Upload collections will fail');
+  reconcileRegistry().catch((e) => console.log(`heal:     skipped — ${e.message}`));
+}
+
 (async () => {
   console.log('Discover Koinos gateway');
   console.log(`network:  ${CFG.network}`);
-  if (!CFG.devWif) {
-    DEMO = true;
-    BOOT_NOTE = 'no sponsor wallet configured';
-    console.log('mode:     DEMO (set GATEWAY_DEV_WIF to go live)');
-  } else if (!DEMO) {
-    try {
-      /* The FULL ordered candidate list, not just the first healthy one —
-         koilib's Provider rotates to the next node when one starts
-         answering with garbage mid-flight. */
-      const rpcUrls = await pickRpcs(CFG.network);
-      chain.configure({
-        network: CFG.network, rpcs: rpcUrls,
-        devWif: CFG.devWif,
-        collectionAddr: CFG.collectionAddr, collectionWif: CFG.collectionWif,
-        dexOrderbook: CFG.dexOrderbook,
-        launchpadAddr: CFG.launchpadAddr,
-      });
-      const [sponsorMana, sponsorKoin] = await Promise.all([
-        chain.mana(chain.devAddress()), chain.koinBalance(chain.devAddress()),
-      ]);
-      console.log(`sponsor:  ${chain.devAddress()} (${sponsorKoin} ${NETWORKS[CFG.network].nativeSymbol}, ${Math.floor(sponsorMana)} mana)`);
-      if (CFG.collectionAddr) {
-        try {
-          const info = await chain.collectionInfo();
-          if (/^Uninitialized/.test(info.name || '')) {
-            /* Deployed but never initialized — this is what OURO (and every
-               chain reader) shows as an unnamed collection. We HOLD the
-               collection key, so finish the setup ourselves, in the
-               background — serving never waits on it. */
-            console.log(`paint:    ${CFG.collectionAddr} deployed but NOT initialized — finishing its setup now…`);
-            (async () => {
-              await chain.initializeCollectionAt(CFG.collectionAddr, chain.keyFromWif(CFG.collectionWif), {
-                name: PAINT_NAME, symbol: 'PAINT', uri: '',
-                description: 'Pixel art minted first-hand by Koinos newcomers at the Discover Koinos gateway.',
-                owner: chain.devAddress(), royaltyBps: 0,
-              });
-              const fixed = await chain.collectionInfo();
-              console.log(`paint:    setup finished — "${fixed.name}" (${fixed.symbol}); OURO shows it within ~5 minutes`);
-              registerPaintCollection(fixed);
-            })().catch((e) => {
-              console.log(`paint:    self-initialize failed — ${e.message}`);
-              console.log(`paint:    fallback: KOINOS_NETWORK=${CFG.network} node scripts/deploy-playground.js gateway.env`);
-            });
-          } else {
-            console.log(`paint:    ${CFG.collectionAddr} "${info.name || '?'}" (${info.symbol || '?'})`);
-            registerPaintCollection(info);
-          }
-        } catch (e) {
-          console.log(`paint:    WARNING — collection at ${CFG.collectionAddr} did not answer get_info: ${e.message}`);
-        }
-      } else {
-        console.log('paint:    no Paint collection configured — run scripts/deploy-playground.js');
-      }
-      console.log(`dex:      ${chain.dexEnabled() ? 'Trade Koinos ' + CFG.dexOrderbook : 'off (mainnet only)'}`);
-      if (chain.launchpadEnabled()) {
-        launchpadKeeper = createLaunchpadKeeper({
-          chain, manaFloor: CFG.minManaAction,
-          log: (m) => console.log(m),
-        });
-        launchpadKeeper.start();
-      } else {
-        console.log('keeper:   launchpad OFF — set LAUNCHPAD_ADDRESS to auto-settle Trade Koinos launches');
-      }
-      if (!fs.existsSync(TOKEN_WASM)) console.log('tokens:   WARNING — contracts/prebuilt/token/contract.wasm missing; token launches will fail');
-      if (!fs.existsSync(COLLECTION_WASM)) console.log('upload:   WARNING — contracts/prebuilt/collection/contract.wasm missing; Upload collections will fail');
-    } catch (e) {
-      DEMO = true;
-      BOOT_NOTE = 'chain unreachable at boot';
-      console.log(`mode:     DEMO — ${e.message}`);
-    }
-  } else {
-    console.log('mode:     DEMO (DEMO_MODE=1)');
-  }
+  if (DEMO) console.log(`mode:     DEMO — ${chainNote()}`);
+  else console.log('mode:     CONNECTING — failed connections retry every 30 seconds');
+  // Serve the site while connecting; chain actions are guarded until ready.
+  chainStartup.start();
   // Google sign-in is bridged to Aurvania — inherit its client id if we have
   // none of our own, so the shared-wallet login works out of the box.
   await auth.warmup();
@@ -1992,10 +2014,6 @@ const server = http.createServer(async (req, res) => {
     console.log(`serving:  http://localhost:${CFG.port} ${DEMO ? '(demo mode)' : ''}`);
   });
 
-  /* Heal the registry against the chain in the background — never blocks
-     serving, and a mint recorded on-chain but lost to an RPC hiccup (or a
-     data/ wipe) reappears on the site within a minute of boot. */
-  if (!DEMO) reconcileRegistry().catch((e) => console.log(`heal:     skipped — ${e.message}`));
 })();
 
 /* Ensure the shared Paint collection is in the registry (kind:'paint') and,
