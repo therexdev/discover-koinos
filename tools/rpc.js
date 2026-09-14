@@ -70,8 +70,45 @@ async function rpc(url, method, params = {}, timeoutMs = 10000) {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const body = await res.json();
-  if (body.error) throw new Error(body.error.message || 'rpc error');
+  if (body.error) {
+    const { message, data } = body.error;
+    let detail;
+    try { detail = typeof data === 'string' ? JSON.parse(data) : data; }
+    catch (_) { detail = { data }; }
+    const error = new Error(detail ? JSON.stringify({ error: message, ...detail }) : message || 'rpc error');
+    error.rpcError = true;
+    throw error;
+  }
+  if (body.result === undefined) throw new Error('RPC response has no result');
   return body.result;
+}
+
+/* koilib defaults to aborting on the first error. Use bounded, cancellable
+   requests and try the remaining nodes for reads. A transaction broadcast
+   is never replayed here: a lost response does not mean it was rejected. */
+function configureRpcProvider(provider, { timeoutMs = 10000, broadcastTimeoutMs = 25000 } = {}) {
+  provider.call = async (method, params) => {
+    const start = provider.currentNodeId;
+    const read = /^(?:chain|block_store|transaction_store)\.get_/.test(method)
+      || method === 'chain.read_contract';
+    const attempts = read ? provider.rpcNodes.length : 1;
+    let lastError;
+    for (let i = 0; i < attempts; i++) {
+      const index = (start + i) % provider.rpcNodes.length;
+      try {
+        const result = await rpc(provider.rpcNodes[index], method, params, read ? timeoutMs : broadcastTimeoutMs);
+        provider.currentNodeId = index;
+        return result;
+      } catch (error) {
+        lastError = error;
+        // A node may serve the head while its read service is unavailable.
+        // Reads can safely try another endpoint, including RPC errors.
+        provider.currentNodeId = (index + 1) % provider.rpcNodes.length;
+      }
+    }
+    throw lastError || new Error('No Koinos RPC endpoints configured');
+  };
+  return provider;
 }
 
 /** A node is usable if it serves the chain head. Returns the head height. */
@@ -114,4 +151,4 @@ async function pickRpcs(netName, { quiet = false } = {}) {
   return healthy.concat(down.map(r => r.url));
 }
 
-module.exports = { NETWORKS, rpcCandidates, probe, pickRpc, pickRpcs, rpc };
+module.exports = { NETWORKS, rpcCandidates, configureRpcProvider, probe, pickRpc, pickRpcs, rpc };

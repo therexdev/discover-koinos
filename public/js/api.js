@@ -23,7 +23,8 @@ const Api = (() => {
   /* Cache the PROMISE, not just the result: several widgets ask for the
      config during boot, and caching only the resolved value lets them
      all fire their own request before the first one lands. */
-  function config() {
+  function config(refresh = false) {
+    if (refresh) _config = null;
     if (!_config) _config = call('/api/config').catch(e => { _config = null; throw e; });
     return _config;
   }

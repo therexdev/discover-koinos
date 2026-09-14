@@ -32,7 +32,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Signer, Provider, Contract, Transaction, utils } = require('koilib');
-const { NETWORKS, rpcCandidates } = require('./rpc');
+const { NETWORKS, rpcCandidates, configureRpcProvider } = require('./rpc');
 
 /* Every generated Koinos ABI carries a `koinos.btype` node that EXTENDS
    google.protobuf.FieldOptions — and the protobufjs bundled with koilib
@@ -114,17 +114,7 @@ const launchpadEnabled = () => !!(K.devWif && K.launchpadAddr);
 
 function provider() {
   if (!_provider) {
-    _provider = new Provider(K.rpcs.slice());
-    /* koilib's fetch has no timeout: one stalled connection would hang a
-       read forever. Race every call against a 25s clock. */
-    const rawCall = _provider.call.bind(_provider);
-    _provider.call = (method, params) => Promise.race([
-      rawCall(method, params),
-      new Promise((_, reject) => {
-        const t = setTimeout(() => reject(new Error(`koinos rpc timeout (${method})`)), 25000);
-        if (t.unref) t.unref();
-      }),
-    ]);
+    _provider = configureRpcProvider(new Provider(K.rpcs.slice()));
   }
   return _provider;
 }
