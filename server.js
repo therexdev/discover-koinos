@@ -451,15 +451,13 @@ function clientIp(req) {
    minting things to strangers. The browser key signs a short message —
    invisible to the visitor, no popups. */
 
-function verifyProof(body, action) {
-  const { address, ts, sig } = body || {};
-  if (!chain.isAddr(address)) return 'a valid Koinos address is required';
-  const t = Number(ts);
-  if (!t || Math.abs(Date.now() - t) > 5 * 60000) return 'stale request — check your clock and try again';
-  const msg = `discover-koinos:${action}:${t}`;
-  if (!chain.verifyAuthSignature(msg, sig, address)) return 'this request was not signed by your account key';
-  return null;
-}
+const { createRequestProofVerifier } = require('./tools/request-proof');
+const requestProof = createRequestProofVerifier({
+  audience: CFG.publicOrigin, network: CFG.network, origins: CFG.signerOrigins,
+  directory: path.join(DATA_DIR, 'request-proof-nonces'),
+  isAddress: chain.isAddr, verifySignature: chain.verifyAuthSignature,
+});
+function verifyProof(body, action, req) { requestProof.verify(body, action, req); }
 
 /* ---------------- prepared-transaction refs ---------------- */
 
@@ -601,6 +599,7 @@ api.config = async () => {
   return {
     ok: true,
     network: CFG.network,
+    requestProof: requestProof.config(),
     networkLabel: net.label,
     testnet: !!net.testnet,
     nativeSymbol: net.nativeSymbol,
@@ -811,6 +810,7 @@ api.signerConfig = async () => ({
   google: auth.signerEnabled(),
   googleClientId: auth.signerEnabled() ? auth.googleClientId() : null,
   sessionTtlMins: CFG.signerSessionTtlMins,
+  requestProof: requestProof.config(),
   /* Launchpad extras for the trade app: where the launchpad contract lives
      (auto-settled by this server's keeper) and whether this server can mint
      fresh tokens for a session (sponsor wallet configured + not in demo). */
@@ -829,8 +829,7 @@ api.launchpadLogo = async (body, ip, req) => {
     if (!sess) throw httpError(401, 'your session has expired — sign in again');
     address = sess.addr;
   } else {
-    const err = verifyProof(body, 'launchpad-logo');
-    if (err) throw httpError(400, err);
+    verifyProof(body, 'launchpad-logo', req);
     address = body.address;
   }
   const token = String(body.token || '');
@@ -850,15 +849,14 @@ api.launchpadLogo = async (body, ip, req) => {
 /* Set / update a launch's social links. Only the launch's CREATOR (verified
    against the launchpad contract on-chain) may write, so a page's links can
    never be hijacked by a stranger. */
-api.launchpadProfile = async (body, ip) => {
+api.launchpadProfile = async (body, ip, req) => {
   let address;
   if (body && body.sessionToken) {
     const sess = auth.verifySessionToken(body.sessionToken);
     if (!sess) throw httpError(401, 'your session has expired — sign in again');
     address = sess.addr;
   } else {
-    const err = verifyProof(body, 'launchpad-profile');
-    if (err) throw httpError(400, err);
+    verifyProof(body, 'launchpad-profile', req);
     address = body.address;
   }
   const launchId = parseInt(body.launchId, 10);
@@ -894,8 +892,7 @@ api.sign = async (body, ip) => {
 };
 
 api.mintNft = async (body, ip, req) => {
-  const err = verifyProof(body, 'mint-nft');
-  if (err) throw httpError(400, err);
+  verifyProof(body, 'mint-nft', req);
   const address = body.address;
   const name = cleanText(body.name, 48);
   if (!name) throw httpError(400, 'give your NFT a name');
@@ -951,8 +948,7 @@ api.launchToken = async (body, ip, req) => {
     if (!sess) throw httpError(401, 'your session has expired — sign in again');
     address = sess.addr;
   } else {
-    const err = verifyProof(body, 'launch-token');
-    if (err) throw httpError(400, err);
+    verifyProof(body, 'launch-token', req);
     address = body.address;
   }
   const name = cleanText(body.name, 64);
@@ -1035,8 +1031,7 @@ api.launchToken = async (body, ip, req) => {
    is auto-registered on OURO. The image is stored on the gateway and
    referenced by URL from the on-chain metadata. */
 api.uploadNft = async (body, ip, req) => {
-  const err = verifyProof(body, 'upload-nft');
-  if (err) throw httpError(400, err);
+  verifyProof(body, 'upload-nft', req);
   const address = body.address;
   const nftName = cleanText(body.name, 48);
   if (!nftName) throw httpError(400, 'give your NFT a name');
@@ -1168,8 +1163,7 @@ api.uploadNft = async (body, ip, req) => {
    escrows only their own token. Mainnet only. Uses the prepare/submit
    round-trip — the returned ref is redeemed via /api/submit. */
 api.listDex = async (body, ip, req) => {
-  const err = verifyProof(body, 'list-dex');
-  if (err) throw httpError(400, err);
+  verifyProof(body, 'list-dex', req);
   const address = body.address;
   const rec = registry.tokens.find(t => t.address === String(body.token || ''));
   if (!rec) throw httpError(404, 'unknown gateway token');
@@ -1219,9 +1213,8 @@ api.listDex = async (body, ip, req) => {
 
 /* Prepared user transactions: the visitor's OWN assets moving, so the
    visitor signs. The server builds every byte (payer = sponsor). */
-api.prepare = async (body, ip) => {
-  const err = verifyProof(body, 'prepare');
-  if (err) throw httpError(400, err);
+api.prepare = async (body, ip, req) => {
+  verifyProof(body, 'prepare', req);
   const address = body.address;
   if (rateLimited('prep:addr:' + address, 20, 3600000) || rateLimited('prep:ip:' + ip, 40, 3600000)) {
     throw httpError(429, 'too many transactions — slow down a moment');
@@ -1881,6 +1874,10 @@ const server = http.createServer(async (req, res) => {
           cap = Math.ceil(CFG.maxUploadBytes * 4 / 3) + 64 * 1024;
         }
         const body = await readBody(req, cap);
+        if (!body || Array.isArray(body) || typeof body !== 'object') throw httpError(400, 'a JSON object is required');
+        if (Object.hasOwn(body, 'sessionToken') && ['proof', 'ts', 'sig'].some(k => Object.hasOwn(body, k))) {
+          throw httpError(400, 'mixed request credentials are not accepted');
+        }
         out = await POST_ROUTES[pathname](body, clientIp(req), req);
       } else {
         throw httpError(404, 'no such endpoint');

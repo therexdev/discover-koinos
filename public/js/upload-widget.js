@@ -108,10 +108,10 @@ function initNftUpload(root, { onMinted } = {}) {
     ]);
     try {
       st.next();
-      const proof = await Wallet.proof('upload-nft');
+      const payload = { name, images: files.map(f => f.dataUrl) };
+      if (isNew) payload.collectionName = cName; else payload.collection = collSelect.value;
+      const body = await Wallet.proof('upload-nft', payload);
       st.next(); st.next();
-      const body = { ...proof, name, images: files.map(f => f.dataUrl) };
-      if (isNew) body.collectionName = cName; else body.collection = collSelect.value;
       const r = await Api.uploadNft(body);
       let extra = '';
       if (r.createdCollection) extra += `<div class="txline">new collection: ${escapeHtml(r.createdCollection.name)} (${escapeHtml(r.createdCollection.symbol)})${r.collectionOuroUrl ? ` — <a href="${escapeHtml(r.collectionOuroUrl)}" target="_blank" rel="noopener">on OURO ↗</a>` : ''}</div>`;

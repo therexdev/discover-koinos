@@ -106,8 +106,8 @@ node server.js
 | `MAX_MINTS_PER_DAY` | `200` | global daily NFT-mint budget |
 | `MAX_COLLECTIONS_PER_DAY` | `10` | global daily Upload-collection deploy budget |
 | `MAX_UPLOAD_BYTES` | `3145728` | max uploaded NFT image size (3MB) |
-| `PUBLIC_ORIGIN` | *(derived)* | canonical https origin — used for uploaded-image URLs and the X callback |
-| `DATA_DIR` | `./data` | where records, keys and uploads live — **point it OUTSIDE the deploy directory** on hosts that wipe the app folder on redeploy (the server also self-heals from the chain, but images can't be rebuilt) |
+| `PUBLIC_ORIGIN` | **required for wallet proofs** | Exact canonical origin, e.g. `https://usekoinos.com` (no trailing slash). Proofs fail closed without it. Also used for image URLs and the X callback. |
+| `DATA_DIR` | `./data` | Persistent records, keys, uploads, and replay records. **Point it outside the deploy directory and share it across all workers.** Replica-local disks cannot safely enforce one-time proofs. |
 | `DEMO_MODE` | — | `1` forces demo mode |
 | **Koinos AI chat** (`/ai`) | | *(optional; the page hides its chat when unset)* |
 | `KAI_API_URL` | — | the OpenAI-compatible API of a running [Koinos AI](https://koinosai.com) app — the operator's own computer. Easiest: flip **Remote access** in the app's Local API view and copy the `https://koinosai.com/r/…` URL it shows (works from anywhere, no router setup). A tunnel/port-forward address works too — `127.0.0.1` only works on the app's own machine. With or without a trailing `/v1`. The app answers through the Koinos AI network and its account is billed per AI token |
@@ -363,3 +363,7 @@ where they are not noise. `node tests/gifts.test.js` pins the whole lifecycle.
 ## License
 
 MIT
+
+## Signed request security
+
+Wallet-authenticated API actions require request proof v2. See [the protocol and coordinated rollout requirements](docs/request-proof-v2.md) before deploying this version with Trade Koinos. Older open pages must refresh; legacy proofs are rejected.

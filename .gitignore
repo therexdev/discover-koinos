@@ -17,3 +17,6 @@ contracts/token/asconfig.json
 data/uploads/
 data/logins.json
 data/collection-keys.json
+
+# Persistent replay protection (runtime, shared by all workers)
+data/request-proof-nonces/

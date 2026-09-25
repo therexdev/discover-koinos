@@ -38,9 +38,9 @@
     ]);
     try {
       st.next();
-      const proof = await Wallet.proof('mint-nft');
+      const proof = await Wallet.proof('mint-nft', { name, palette: studio.palette(), cells: studio.grid() });
       st.next(); st.next();
-      const r = await Api.mintNft({ ...proof, name, palette: studio.palette(), cells: studio.grid() });
+      const r = await Api.mintNft(proof);
       st.done(txLink(r.txid, r.explorer, r.demo)
         + (r.ouroUrl ? `<div class="txline">on the marketplace: <a href="${escapeHtml(r.ouroUrl)}" target="_blank" rel="noopener">view it on OURO ↗</a></div>` : ''));
       UI.markDone('nft');

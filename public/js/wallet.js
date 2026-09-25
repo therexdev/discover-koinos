@@ -113,12 +113,15 @@ const Wallet = (() => {
   /** Sign the standard request proof: the server only performs free
       actions for an address that demonstrably controls its key. Silent —
       no popups, the key is right here. */
-  async function proof(action) {
+  async function proof(action, payload) {
     if (KoinVault.address()) throw new Error("This free action is not yet supported with KOIN Vault. Use a local, Google, or original passkey wallet for this action.");
     if (!loadKey()) createAccount();
-    const ts = Date.now();
-    const sig = await signer.signMessage(`discover-koinos:${action}:${ts}`);
-    return { address: account, ts, sig: btoa(String.fromCharCode(...sig)) };
+    const snapshot = JSON.parse(JSON.stringify(payload));
+    const signingAccount = account, signingKey = signer;
+    const cfg = await Api.config();
+    return RequestProof.create({ action, payload: snapshot, address: signingAccount,
+      context: cfg.requestProof, audience: location.origin, origin: location.origin,
+      network: cfg.network, signMessage: message => signingKey.signMessage(message) });
   }
 
   /** Sign a server-prepared transaction (adds our signature, returns it).
@@ -134,8 +137,8 @@ const Wallet = (() => {
    * transaction, sign it locally, send it back for co-sign + broadcast.
    */
   async function sponsoredAction(action, params) {
-    const p = await proof('prepare');
-    const prep = await Api.prepare({ ...p, action, params });
+    const body = await proof('prepare', { action, params });
+    const prep = await Api.prepare(body);
     if (prep.demo) return Api.submit({ ref: prep.ref, transaction: { id: 'demo' } });
     const signed = await signTx(prep.tx);
     return Api.submit({ ref: prep.ref, transaction: signed });
