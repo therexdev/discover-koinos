@@ -87,9 +87,9 @@
     ]);
     try {
       st.next();
-      const proof = await Wallet.proof('mint-nft');
+      const proof = await Wallet.proof('mint-nft', { name, palette: studio.palette(), cells: studio.grid() });
       st.next(); st.next();
-      const r = await Api.mintNft({ ...proof, name, palette: studio.palette(), cells: studio.grid() });
+      const r = await Api.mintNft(proof);
       st.done(txLink(r.txid, r.explorer, r.demo)
         + (r.ouroUrl ? `<div class="txline">on the marketplace: <a href="${escapeHtml(r.ouroUrl)}" target="_blank" rel="noopener">view it on OURO ↗</a></div>` : '')
         + (r.shareUrl ? `<div class="txline">share it: <a href="${escapeHtml(r.shareUrl)}" target="_blank" rel="noopener">${escapeHtml(r.shareUrl)}</a></div>` : ''));
@@ -127,9 +127,9 @@
     ]);
     try {
       st.next();
-      const proof = await Wallet.proof('launch-token');
+      const proof = await Wallet.proof('launch-token', { name, symbol, supply, decimals: 8, mintable, logo: logoPick.dataUrl() || undefined });
       st.next();
-      const r = await Api.launchToken({ ...proof, name, symbol, supply, decimals: 8, mintable, logo: logoPick.dataUrl() || undefined });
+      const r = await Api.launchToken(proof);
       st.next();
       const cfg = UI.config();
       st.done(
