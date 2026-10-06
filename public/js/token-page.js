@@ -107,9 +107,9 @@
     ]);
     try {
       st.next();
-      const proof = await Wallet.proof('launch-token');
+      const proof = await Wallet.proof('launch-token', { name, symbol, supply, decimals, mintable, logo: logoPick.dataUrl() || undefined });
       st.next();
-      const r = await Api.launchToken({ ...proof, name, symbol, supply, decimals, mintable, logo: logoPick.dataUrl() || undefined });
+      const r = await Api.launchToken(proof);
       st.next();
       st.done(
         `<div class="txline">contract: ${r.explorer ? `<a href="${escapeHtml(r.explorer)}" target="_blank" rel="noopener">${escapeHtml(r.address)}</a>` : escapeHtml(r.address)}</div>`
@@ -175,8 +175,8 @@
       ]);
       try {
         st.next();
-        const proof = await Wallet.proof('list-dex');
-        const prep = await Api.listDex({ ...proof, token, amount, price });
+        const proof = await Wallet.proof('list-dex', { token, amount, price });
+        const prep = await Api.listDex(proof);
         st.next();
         let signed;
         if (prep.demo) { signed = { id: 'demo' }; } else { signed = await Wallet.signTx(prep.tx); }

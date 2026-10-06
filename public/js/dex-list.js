@@ -39,8 +39,8 @@ const DexList = (() => {
       ]);
       try {
         st.next();
-        const proof = await Wallet.proof('list-dex');
-        const prep = await Api.listDex({ ...proof, token, amount, price });
+        const proof = await Wallet.proof('list-dex', { token, amount, price });
+        const prep = await Api.listDex(proof);
         st.next();
         const signed = prep.demo ? { id: 'demo' } : await Wallet.signTx(prep.tx);
         st.next();

@@ -1,0 +1,38 @@
+{
+  "payload": {
+    "address": "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK",
+    "name": "Test 🪙",
+    "supply": "1000000",
+    "decimals": 8,
+    "mintable": false,
+    "links": {
+      "website": "https://example.com/?a=1&b=2",
+      "description": "quote \" and newline\n"
+    },
+    "samples": [
+      null,
+      true,
+      1.5,
+      {
+        "2": "two",
+        "10": "ten"
+      }
+    ]
+  },
+  "canonicalPayload": "{\"address\":\"19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK\",\"decimals\":8,\"links\":{\"description\":\"quote \\\" and newline\\n\",\"website\":\"https://example.com/?a=1&b=2\"},\"mintable\":false,\"name\":\"Test 🪙\",\"samples\":[null,true,1.5,{\"10\":\"ten\",\"2\":\"two\"}],\"supply\":\"1000000\"}",
+  "fields": {
+    "version": 2,
+    "action": "launch-token",
+    "method": "POST",
+    "path": "/api/launch-token",
+    "address": "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK",
+    "audience": "https://usekoinos.com",
+    "origin": "https://app.tradekoinos.com",
+    "network": "mainnet",
+    "issuedAt": 1800000000000,
+    "expiresAt": 1800000300000,
+    "nonce": "1800000000000.abababababababababababababababababababababababababababababababab",
+    "payloadHash": "db12ac3cfbcad2e0e921e7b33d434d0d675145fb78ad90e483fc64e639dea667"
+  },
+  "message": "discover-koinos:request-proof:v2\n{\"action\":\"launch-token\",\"address\":\"19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK\",\"audience\":\"https://usekoinos.com\",\"expiresAt\":1800000300000,\"issuedAt\":1800000000000,\"method\":\"POST\",\"network\":\"mainnet\",\"nonce\":\"1800000000000.abababababababababababababababababababababababababababababababab\",\"origin\":\"https://app.tradekoinos.com\",\"path\":\"/api/launch-token\",\"payloadHash\":\"db12ac3cfbcad2e0e921e7b33d434d0d675145fb78ad90e483fc64e639dea667\",\"version\":2}"
+}
