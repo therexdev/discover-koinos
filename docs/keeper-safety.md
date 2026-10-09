@@ -58,9 +58,51 @@ override with the chain facade when constructed.
   signed-payload resubmitter is provided.
 - Reorganizations after the sampled canonical receipt remain possible.
   Release rehearsal evidence must separately establish irreversibility
-  and expected balances/state. The production KoinDX helper still uses its
-  existing mainnet router; no testnet routing or deployment is added here.
+  and expected balances/state. The production KoinDX helper uses its
+  existing mainnet router and refuses to invoke it on another network.
 
 Run `npm test` for offline regression coverage, including queue ordering,
 mana exhaustion, canonical/reverted/orphaned receipt outcomes, lost
 responses, pending-state restarts, and progress only after confirmation.
+
+## Isolated Harbinger integration
+
+`scripts/rehearse-keeper.js` runs one manual cycle of the real keeper,
+chain facade, durable pending store and receipt confirmation helper.
+The private absolute JSON configuration supplies test keys by file path,
+explicit account addresses, deployed bytecode hashes, fixed launch terms,
+and separate output paths. No test configuration is loaded by `server.js`.
+
+```sh
+node scripts/rehearse-keeper.js /absolute/private/config.json --check
+node scripts/rehearse-keeper.js /absolute/private/config.json
+```
+
+The first command performs only reads. The second may submit one or more
+keeper actions for the selected launch during a single cycle. It does not
+start a background process. Invoke it again only after reviewing that
+cycle's report and pending journal. Keep a single writer and coordinate
+all other activity using the same sponsor wallet.
+
+The harness requires the pinned Harbinger chain ID and RPC, a new launch
+ID of at least 5, a sale capped at 0.1 tKOIN, and exact preservation of
+launch 3 for the separate seven-day reclaim. It verifies deployed metadata
+and launch terms before each broadcast. Metadata comes from the existing
+isolated fixture's `System.getContractMetadata` reader; it is not a
+trustless state proof. An existing pinned pool is mandatory. Only
+finalize, process, claim_locked, provide_liquidity and claim_liquidity
+calls for that one launch are allowed. Uploads, orderbook changes, token
+transfers and calls to other launches are rejected by the harness.
+
+`createHarbingerRehearsalDex` reuses the production KoinDX pair lookup with
+an explicit test router, verifies its hash and authority metadata and
+fresh chain ID, and disables pool creation and mainnet bytecode caches.
+Creator-token and LP claims additionally require actual chain time to
+reach the on-chain deadlines. The ID-only production pending journal is
+preserved across invocations. Reports contain IDs, receipts, launch state
+and logs, never private keys or signed transaction payloads.
+
+This exercises production modules in a local process. It does not prove
+hosted deployment configuration, browser signing, new pool creation,
+mainnet router provenance, or irreversible finality. Those require
+separate checks and evidence.

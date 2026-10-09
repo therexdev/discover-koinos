@@ -29,7 +29,7 @@
 /* Bumped with every change here; the keeper prints it at boot so
    /api/keeper-log proves which koindx build a host is actually running
    (a live host was observed with a NEWER keeper and an OLDER koindx). */
-const VERSION = 'v4-candidates';
+const VERSION = 'v5-rehearsal-isolation';
 
 const fs = require('fs');
 const path = require('path');
@@ -63,9 +63,9 @@ const KOIN_DEX_ID = 'koin';
 const VHP_DEX_ID = 'vhp';
 
 
-function peripheryContract(chain, signer) {
+function peripheryContract(chain, signer, address = PERIPHERY_B58) {
   return new Contract({
-    id: PERIPHERY_B58,
+    id: address,
     abi: PERIPHERY_ABI,
     provider: chain.provider(),
     signer,
@@ -74,12 +74,48 @@ function peripheryContract(chain, signer) {
 
 /** Pool (pair) contract address for KOIN/token, or null if none exists. */
 async function getPair(chain, tokenB58) {
-  const { result } = await peripheryContract(chain).functions.get_pair({
+  if (chain.K.network !== 'mainnet') throw new Error('KoinDX mainnet router requires mainnet; use an explicit isolated rehearsal adapter');
+  return lookupPair(chain, tokenB58, PERIPHERY_B58);
+}
+
+async function lookupPair(chain, tokenB58, router) {
+  const { result } = await peripheryContract(chain, undefined, router).functions.get_pair({
     tokenA: KOIN_DEX_ID,
     tokenB: tokenB58,
   });
   const value = result && result.value;
   return value && String(value).length ? String(value) : null;
+}
+
+const HARBINGER_CHAIN_ID = 'EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==';
+
+/* Programmatic, existing-pool-only adapter for the isolated rehearsal.
+   server.js never loads this configuration. Reuse the real lookup code,
+   but never borrow mainnet bytecode candidates, caches, or router defaults.
+   readMetadata is the rehearsal's System.getContractMetadata reader. */
+function createHarbingerRehearsalDex({ router, routerSha256, readMetadata }) {
+  if (typeof router !== 'string' || !utils.isChecksumAddress(router) || router === PERIPHERY_B58 ||
+      !/^[a-f0-9]{64}$/.test(routerSha256) || typeof readMetadata !== 'function') {
+    throw new Error('isolated rehearsal requires an explicit router, SHA256 and metadata reader');
+  }
+  async function verify(chain) {
+    // Read the provider, not the facade's cached chainId, before each use.
+    if (chain.K.network !== 'harbinger' ||
+        (await chain.provider().getChainId()) !== HARBINGER_CHAIN_ID) {
+      throw new Error('isolated KoinDX rehearsal requires the pinned Harbinger chain');
+    }
+    const metadata = await readMetadata(router);
+    if (!metadata || Buffer.from(metadata.hash || '', 'base64url').toString('hex') !== '1220' + routerSha256 ||
+        metadata.system || metadata.authorizesCall || metadata.authorizesTransaction || metadata.authorizesUpload) {
+      throw new Error('isolated KoinDX router metadata does not match the pinned deployment');
+    }
+  }
+  return Object.freeze({
+    VERSION: VERSION + '-isolated-harbinger',
+    verify,
+    getPair: async (chain, token) => { await verify(chain); return lookupPair(chain, token, router); },
+    createPair: async () => { throw new Error('isolated rehearsal permits an existing pinned pool only'); },
+  });
 }
 
 /* ---------------- pool bytecode candidates ----------------
@@ -210,6 +246,7 @@ async function candidateBytecodes(chain, log) {
     bytecode once, remembers rejected hashes so no attempt repeats, and
     caches the one that works. Returns { pair, txId }. */
 async function createPair(chain, tokenB58, log) {
+  if (chain.K.network !== 'mainnet') throw new Error('KoinDX pool bootstrap requires mainnet; isolated rehearsals cannot create pools here');
   const candidates = await candidateBytecodes(chain, log);
   if (!candidates.length) {
     throw new Error('no untried pool bytecode candidate available (KoinDX app unreadable and donor pool stale)');
@@ -251,4 +288,4 @@ async function createPair(chain, tokenB58, log) {
   throw lastError || new Error('pool creation failed');
 }
 
-module.exports = { getPair, createPair, PERIPHERY_B58, VERSION };
+module.exports = { getPair, createPair, PERIPHERY_B58, VERSION, HARBINGER_CHAIN_ID, createHarbingerRehearsalDex };
