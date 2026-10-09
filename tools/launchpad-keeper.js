@@ -28,6 +28,7 @@
 'use strict';
 
 const koindx = require('./koindx');
+const { createPendingStore, keeperPendingFile } = require('./keeper-pending');
 
 const STATUS_ACTIVE = 0;
 const STATUS_DISTRIBUTING = 1;
@@ -55,6 +56,7 @@ const POOL_CREATE_MANA = 85;
 
 function createLaunchpadKeeper(opts) {
   const chain = opts.chain;                 // tools/koinos.js module
+  const dex = opts.koindx || koindx;
   const rawLog = opts.log || ((m) => console.log(m));
   /* Every keeper line also lands in a small ring buffer served at
      /api/keeper-log — settlement problems must be diagnosable from a
@@ -74,6 +76,12 @@ function createLaunchpadKeeper(opts) {
   const marketEnsured = new Set(); // launch ids whose orderbook market exists
   let timer = null;
   let cycling = false;
+  let pending;
+  const pendingFile = opts.pendingFile || keeperPendingFile(chain.K.keeperPendingFile);
+  // Keep programmatic path overrides visible to the shared devTx guard.
+  // For protection before this loop is constructed, configure the path
+  // on chain.K during startup (the default DATA_DIR path needs no setup).
+  if (opts.pendingFile) chain.K.keeperPendingFile = pendingFile;
 
   const skipping = (id) => {
     const entry = backoff.get(id);
@@ -98,6 +106,53 @@ function createLaunchpadKeeper(opts) {
     } catch (_) {
       return false; // chain unreadable: try again next cycle
     }
+  }
+
+  /* The chain helper calls this hook INSIDE its nonce/signing queue,
+     immediately before each submission, including nested market/pool
+     transactions. A post-action mana check cannot protect the first tx. */
+  async function tracked(id, action, submit, floor = manaFloor) {
+    let txId;
+    const beforeSend = async (prepared) => {
+      if (pending.get(id)) throw Object.assign(new Error('previous transaction still pending'), { pending: true });
+      let live;
+      try { live = await chain.mana(chain.devAddress()); } catch (_) { /* fail closed */ }
+      if (!Number.isFinite(live) || live < floor) {
+        throw Object.assign(new Error(`sponsor mana ${Number.isFinite(live) ? live : 'unreadable'}; need at least ${floor}`), { paused: true, floor });
+      }
+      txId = prepared.txId;
+      if (!txId) throw new Error('prepared transaction has no ID');
+      pending.set(id, { txId, action, createdAt: new Date().toISOString() });
+    };
+    try {
+      const result = await submit({ beforeSend });
+      if (txId) pending.clear(id, txId); // helper resolves only on canonical success
+      return result;
+    } catch (error) {
+      if (txId && (error.rejected || (error.confirmed && error.reverted))) pending.clear(id, txId);
+      // Unknown outcomes retain their ID across cycles AND process restarts.
+      throw error;
+    }
+  }
+
+  const settleTx = (id, action, operations) => tracked(id, action, options => chain.devTx(operations, options));
+
+  async function reconcile(id) {
+    const entry = pending.get(id);
+    if (!entry) return true;
+    const outcome = await chain.transactionOutcome(entry.txId);
+    if (outcome.status !== 'confirmed' && outcome.status !== 'reverted') {
+      log(`keeper:   launch #${id} ${entry.action} pending (${entry.txId}); awaiting canonical receipt`);
+      return false;
+    }
+    pending.clear(id, entry.txId);
+    if (outcome.status === 'reverted') {
+      failed(id, entry.action, new Error(`transaction ${entry.txId} reverted in canonical block ${outcome.blockId}`));
+      return false;
+    }
+    succeeded(id); succeeded(`${id}:liq`);
+    log(`keeper:   launch #${id} ${entry.action} confirmed (${entry.txId})`);
+    return true;
   }
 
   async function readLaunches() {
@@ -139,14 +194,17 @@ function createLaunchpadKeeper(opts) {
       // are born from a dedicated 2-op transaction the keeper must send
       // itself (see tools/koindx.js) — the contract cannot
       const token = String(launch.token);
-      const pair = await at(`get_pair ${token.slice(0, 8)}…`, () => koindx.getPair(chain, token));
+      const pair = await at(`get_pair ${token.slice(0, 8)}…`, () => dex.getPair(chain, token));
       if (!pair) {
         const live = await at('read sponsor mana', () => chain.mana(chain.devAddress()));
         if (live < POOL_CREATE_MANA) {
           log(`keeper:   launch #${id} waiting for sponsor mana ≥${POOL_CREATE_MANA} to create the KoinDX pool (${Math.floor(live)} now)`);
           return false;
         }
-        const made = await at('create_pair', () => koindx.createPair(chain, token, log));
+        const poolChain = Object.create(chain);
+        poolChain.sendAsAccount = (key, operations, options) => tracked(id, 'create_pair',
+          hooks => chain.sendAsAccount(key, operations, { ...options, ...hooks }), Math.max(manaFloor, POOL_CREATE_MANA));
+        const made = await at('create_pair', () => dex.createPair(poolChain, token, log));
         log(`keeper:   launch #${id} KoinDX pool created at ${made.pair}`);
         return true; // provide_liquidity follows next cycle
       }
@@ -156,7 +214,7 @@ function createLaunchpadKeeper(opts) {
           .launchpadContract(chain.devSigner())
           .functions.provide_liquidity({ launchId: id }, { onlyOperation: true })
       );
-      await at('provide_liquidity tx', () => chain.devTx([operation]));
+      await at('provide_liquidity tx', () => settleTx(id, 'provide_liquidity', [operation]));
       log(`keeper:   launch #${id} liquidity added on KoinDX`);
       return true;
     }
@@ -172,7 +230,7 @@ function createLaunchpadKeeper(opts) {
           .launchpadContract(chain.devSigner())
           .functions.claim_liquidity({ launchId: id }, { onlyOperation: true })
       );
-      await at('claim_liquidity tx', () => chain.devTx([operation]));
+      await at('claim_liquidity tx', () => settleTx(id, 'claim_liquidity', [operation]));
       log(`keeper:   launch #${id} LP tokens delivered to creator`);
       return true;
     }
@@ -196,7 +254,7 @@ function createLaunchpadKeeper(opts) {
       const { operation } = await chain
         .launchpadContract(chain.devSigner())
         .functions.finalize({ launchId: id }, { onlyOperation: true });
-      await chain.devTx([operation]);
+      await settleTx(id, 'finalize', [operation]);
       log(`keeper:   launch #${id} finalized`);
       return true;
     }
@@ -214,7 +272,7 @@ function createLaunchpadKeeper(opts) {
             { launchId: id, limit: PROCESS_BATCH },
             { onlyOperation: true }
           );
-        await chain.devTx([operation]);
+        await settleTx(id, 'process', [operation]);
         acted = true;
         const { result } = await chain
           .launchpadContract()
@@ -246,7 +304,7 @@ function createLaunchpadKeeper(opts) {
       const { operation } = await chain
         .launchpadContract(chain.devSigner())
         .functions.claim_locked({ launchId: id }, { onlyOperation: true });
-      await chain.devTx([operation]);
+      await settleTx(id, 'claim_locked', [operation]);
       log(`keeper:   launch #${id} locked tokens delivered to creator`);
       acted = true;
     }
@@ -260,9 +318,10 @@ function createLaunchpadKeeper(opts) {
       !marketEnsured.has(id)
     ) {
       try {
-        await chain.ensureDexMarket(String(launch.token));
+        await tracked(id, 'create_market', options => chain.ensureDexMarket(String(launch.token), options));
         marketEnsured.add(id);
       } catch (error) {
+        if (error.paused || pending.get(id)) throw error;
         log(`keeper:   launch #${id} orderbook listing failed — ${error.message} (retrying next cycle)`);
       }
     }
@@ -280,6 +339,7 @@ function createLaunchpadKeeper(opts) {
             acted = true;
           }
         } catch (error) {
+          if (error.paused || pending.get(id)) throw error;
           /* the DEX leg retries much sooner than broken-launch backoff:
              10 minutes at worst (2, 4, 8, 10, 10 …) — a reverting attempt
              costs a little mana, but a settled pool shouldn't wait an hour */
@@ -295,16 +355,33 @@ function createLaunchpadKeeper(opts) {
     if (cycling || !chain.launchpadEnabled()) return;
     cycling = true;
     try {
+      if (!pending) pending = createPendingStore(pendingFile, {
+        network: chain.K.network, chainId: await chain.chainId(),
+        launchpad: chain.K.launchpadAddr, payer: chain.devAddress(),
+      });
+      // Keeper dev transactions share one nonce. Even another launch must
+      // wait: preparing its tx now could replace the unresolved attempt.
+      let unresolved = false;
+      for (const [id] of pending.entries()) {
+        if (!(await reconcile(Number(id)))) unresolved = true;
+      }
+      if (unresolved) return;
       const launches = await readLaunches();
       for (const launch of launches) {
         const id = Number(launch.id);
-        if (skipping(id)) continue;
         let acted = false;
         try {
+          if (skipping(id)) continue;
           acted = await settleOne(launch);
           if (acted) succeeded(id);
         } catch (error) {
+          if (error.paused) {
+            log(`keeper:   launch #${id} paused — ${error.message}`);
+            if (error.floor === manaFloor) break;
+            continue;
+          }
           failed(id, 'settlement', error);
+          if (pending.get(id)) break;
         }
         if (acted && !(await manaOk())) break;
       }
@@ -325,7 +402,7 @@ function createLaunchpadKeeper(opts) {
       log(`keeper:   watching launchpad ${chain.K.launchpadAddr} (every ${Math.round(intervalMs / 1000)}s)`);
       /* bumped on every keeper/koindx change: the ONLY reliable way to see
          from /api/keeper-log which build a host is actually running */
-      log(`keeper:   code v6, koindx module ${koindx.VERSION || 'STALE (pre-v4 — deploy did not replace tools/koindx.js!)'}`);
+      log(`keeper:   code v7, koindx module ${dex.VERSION || 'STALE (pre-v4 — deploy did not replace tools/koindx.js!)'}`);
     },
     stop() {
       if (timer) clearInterval(timer);

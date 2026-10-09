@@ -11,7 +11,8 @@
     "keygen": "node tools/keygen.js",
     "deploy-playground": "node scripts/deploy-playground.js",
     "build-contracts": "cd contracts && npm ci && npm run build",
-    "test": "node tests/gifts.test.js && node tests/smtp.test.js && node --test tests/chain-startup.test.js tests/chain-server.test.js tests/rpc.test.js"
+    "test": "node tests/gifts.test.js && node tests/smtp.test.js && node --test tests/chain-startup.test.js tests/chain-server.test.js tests/rpc.test.js tests/launchpad-keeper.test.js tests/transaction-confirmation.test.js tests/keeper-rehearsal.test.js",
+    "testnet:keeper": "node scripts/rehearse-keeper.js"
   },
   "engines": {
     "node": ">=18"

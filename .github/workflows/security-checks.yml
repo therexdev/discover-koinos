@@ -1,0 +1,21 @@
+name: Security regression checks
+
+on:
+  pull_request:
+  push:
+    branches: [claude/koinos-onboarding-gateway-6hlntv]
+
+permissions:
+  contents: read
+
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm test

@@ -33,6 +33,8 @@ const fs = require('fs');
 const path = require('path');
 const { Signer, Provider, Contract, Transaction, utils } = require('koilib');
 const { NETWORKS, rpcCandidates, configureRpcProvider } = require('./rpc');
+const confirmation = require('./transaction-confirmation');
+const { createPendingStore, keeperPendingFile } = require('./keeper-pending');
 
 /* Every generated Koinos ABI carries a `koinos.btype` node that EXTENDS
    google.protobuf.FieldOptions — and the protobufjs bundled with koilib
@@ -394,48 +396,62 @@ function humanChainError(e) {
    timeout: <id>" means ITS REPLY died — the transaction is often accepted
    and mined anyway (big contract uploads hit this constantly). A real
    rejection names its reason (insufficient rc, invalid nonce, reverted…). */
-const TRANSIENT_SEND = /request timeout|timed? ?out|unexpected token|invalid json|fetch|network|econn|socket|hang up|abort|bad gateway|gateway time|service unavailable|too many request|(^|[^0-9])(429|500|502|503|504)([^0-9]|$)/i;
+const TRANSIENT_SEND = /request timeout|timed? ?out|deadline exceeded|internal error|unexpected token|invalid json|fetch|network|econn|socket|hang up|abort|bad gateway|gateway time|service unavailable|too many request|already|duplicate|known transaction|(^|[^0-9])(429|500|502|503|504)([^0-9]|$)/i;
 
-/** Broadcast, tolerating an ambiguous reply: on a transient-looking send
-    error the mined-check (waitMined) becomes the arbiter instead of the
-    error. A definitive chain rejection still throws immediately, unwrapped. */
+/** Broadcast once. Only an explicit, non-transient RPC rejection proves
+    failure; all other replies are reconciled by the same transaction id. */
 async function sendTolerant(tx) {
   try { await tx.send(); }
   catch (e) {
     const msg = humanChainError(e);
-    if (!TRANSIENT_SEND.test(msg)) { const err = new Error(msg); err.cause = e; throw err; }
+    if (e.rpcError && !TRANSIENT_SEND.test(msg)) {
+      const err = new Error(msg);
+      Object.assign(err, { cause: e, rejected: true, txId: tx.transaction.id });
+      throw err;
+    }
     // Ambiguous — fall through; waitMined decides whether it landed.
   }
 }
 
-/** Wait until a broadcast transaction is mined — OUR loop, not koilib's.
-    koilib's wait() dies on the first bad RPC answer, and public RPCs
-    routinely answer one poll with an HTML error page ("Unexpected token <
-    in JSON") while the transaction mines fine — which is how a successful
-    launch got reported to a user as a failure. Here every poll error is
-    treated as transient; only the clock ends the wait. */
+/** Wait for a canonical, non-reverted transaction receipt. Poll failures
+    and timeouts preserve an ambiguous outcome with the original id. */
 async function waitMined(txId, timeoutMs = 90000) {
-  const p = provider();
-  const deadline = Date.now() + timeoutMs;
-  let lastErr = null;
-  while (Date.now() < deadline) {
-    try {
-      const { transactions } = await p.getTransactionsById([txId]);
-      const t = transactions && transactions[0];
-      if (t && t.containing_blocks && t.containing_blocks.length) {
-        return { blockId: t.containing_blocks[0] };
-      }
-    } catch (e) { lastErr = e; }          // transient: HTML page, timeout, blip
-    await new Promise(r => setTimeout(r, 2500));
+  return confirmation.waitForTransaction(provider(), txId, { timeoutMs });
+}
+
+const transactionOutcome = txId => confirmation.transactionOutcome(provider(), txId);
+
+/* Every devTx spends the sponsor's nonce, including interactive market
+   creation. Reload the keeper journal inside the queue even when its
+   background loop has not started (or is disabled). The keeper remains
+   the journal's only writer; resolved entries need not be removed here.
+   Run before prepare(), hence before this transaction's own beforeSend
+   hook persists its ID. Other payees retain their separate nonces. */
+async function guardKeeperNonce() {
+  const file = keeperPendingFile(K.keeperPendingFile);
+  try { fs.statSync(file); }
+  catch (error) { if (error.code === 'ENOENT') return; throw error; }
+  const pending = createPendingStore(file, {
+    network: K.network, chainId: await chainId(),
+    launchpad: K.launchpadAddr, payer: devAddress(),
+  });
+  for (const [launchId, entry] of pending.entries()) {
+    let outcome;
+    try { outcome = await transactionOutcome(entry.txId); }
+    catch (_) { /* an unreadable outcome is still pending */ }
+    if (outcome?.status !== 'confirmed' && outcome?.status !== 'reverted') {
+      throw Object.assign(new Error(`keeper launch #${launchId} transaction ${entry.txId} is still pending; sponsor nonce is reserved`), {
+        txId: entry.txId, pending: true, keeperPending: true,
+      });
+    }
   }
-  const why = lastErr ? ` (last poll error: ${String(lastErr.message || lastErr).slice(0, 120)})` : '';
-  throw new Error(`not seen in a block within ${Math.round(timeoutMs / 1000)}s${why}`);
 }
 
 /** Server-only transaction: ops signed by the dev wallet, mined before
     resolving. Returns the transaction id. */
-async function devTx(ops) {
+async function devTx(ops, { beforeSend } = {}) {
   return queueTx(async () => {
+    await guardKeeperNonce();
     const tx = new Transaction({
       signer: devSigner(), provider: provider(),
       options: { rcLimit: K.rcLimit },
@@ -443,17 +459,9 @@ async function devTx(ops) {
     for (const op of ops) await tx.pushOperation(op);
     await tx.prepare();
     await tx.sign();
+    if (beforeSend) await beforeSend({ txId: tx.transaction.id });
     await sendTolerant(tx);
-    try { await waitMined(tx.transaction.id); }
-    catch (e) {
-      /* Mined-confirmation timed out; the transaction may still land.
-         The id is carried on the error so a caller that later finds the
-         effect DID happen can still record which transaction did it. */
-      const err = new Error(`transaction ${tx.transaction.id} not confirmed: ${humanChainError(e)}`);
-      err.txId = tx.transaction.id;
-      err.broadcast = true;
-      throw err;
-    }
+    await waitMined(tx.transaction.id);
     return tx.transaction.id;
   });
 }
@@ -462,7 +470,7 @@ async function devTx(ops) {
     collection, initialize as the token), dev co-signs as mana payer.
     The PAYEE is the contract account — the payee is whose nonce a
     transaction spends, and borrowing the busy dev nonce loses races. */
-async function sendAsAccount(key, ops, { rcLimit = K.rcLimit } = {}) {
+async function sendAsAccount(key, ops, { rcLimit = K.rcLimit, beforeSend } = {}) {
   key.provider = provider();
   /* prepare() reads the PAYEE's nonce — and for playground mints the payee
      is the ONE shared collection account. Do the nonce read + sign + send
@@ -479,14 +487,9 @@ async function sendAsAccount(key, ops, { rcLimit = K.rcLimit } = {}) {
     await devSigner().signTransaction(tx.transaction);
     const send = new Transaction({ provider: provider() });
     send.transaction = tx.transaction;
+    if (beforeSend) await beforeSend({ txId: tx.transaction.id });
     await sendTolerant(send);
-    try { await waitMined(tx.transaction.id); }
-    catch (e) {
-      const err = new Error(`transaction ${tx.transaction.id} not confirmed: ${humanChainError(e)}`);
-      err.txId = tx.transaction.id;
-      err.broadcast = true;
-      throw err;
-    }
+    await waitMined(tx.transaction.id);
     return tx.transaction.id;
   });
 }
@@ -527,13 +530,7 @@ async function submitCosigned(signedTx, preparedId, userAddr) {
     const tx = new Transaction({ provider: provider() });
     tx.transaction = clean;
     await sendTolerant(tx);
-    try { await waitMined(clean.id); }
-    catch (e) {
-      const err = new Error(`transaction ${clean.id} not confirmed: ${humanChainError(e)}`);
-      err.txId = clean.id;
-      err.broadcast = true;
-      throw err;
-    }
+    await waitMined(clean.id);
     return clean.id;
   });
 }
@@ -675,13 +672,13 @@ async function dexMarketId(tokenAddr) {
 
 /** Ensure the TOKEN/KOIN market exists (create it, dev-signed + dev-paid, if
     not) and return its marketId. create_market is permissionless. */
-async function ensureDexMarket(tokenAddr) {
+async function ensureDexMarket(tokenAddr, options = {}) {
   let id = await dexMarketId(tokenAddr);
   if (id != null) return id;
   const { operation } = await orderbookContract(devSigner()).functions.create_market({
     baseToken: tokenAddr, quoteToken: net().koinContract, minBaseAmount: '1',
   }, { onlyOperation: true });
-  await devTx([operation]);
+  await devTx([operation], options);
   // Read back the id (the create result isn't surfaced through devTx).
   for (let i = 0; i < 3 && id == null; i++) {
     id = await dexMarketId(tokenAddr);
@@ -814,7 +811,7 @@ module.exports = {
   tokenInfoAt, tokenBalanceAt,
   opKoinTransfer, opNftMint, opNftSetMetadata, opNftTransfer,
   opTokenTransfer, opTokenMint, opTokenBurn, opUploadContract, opTokenInitialize,
-  devTx, sendAsAccount, prepareUserTx, submitCosigned, queueTx,
+  devTx, sendAsAccount, prepareUserTx, submitCosigned, queueTx, transactionOutcome,
   mintNft, mintToCollection, mintManyToCollection, launchToken, launchCollection, newAccount, keyFromWif,
   humanChainError,
   tokenInitialized, collectionInitializedAt, initializeCollectionAt, allCollectionTokens,
